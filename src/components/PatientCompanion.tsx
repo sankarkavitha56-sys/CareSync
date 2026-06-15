@@ -169,7 +169,7 @@ export function PatientCompanion() {
       const res = await fetch("/api/identify-pill", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ textQuery: query })
+        body: JSON.stringify({ textQuery: query, presetChoice: presetPillChoice })
       });
       const responseData = await res.json();
       if (responseData.success && responseData.data) {
