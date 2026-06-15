@@ -267,16 +267,365 @@ function parseMaternalHealthCSV(text: string): Patient[] {
   });
 }
 
+// --- DOCTOR & ESCALATION SYSTEM DOMAIN DATA ---
+export interface Doctor {
+  id: string;
+  name: string;
+  specialization: string;
+  status: "Available" | "Busy";
+}
+
+export interface ActiveAlert {
+  id: string;
+  patientName: string;
+  bedId: string;
+  riskScore: number;
+  priority: string;
+  vitals: {
+    hr: number;
+    spo2: number;
+    bp: string;
+    temp: number;
+  };
+  assignedDoctor: string;
+  assignedDoctorStatus: "Not Responding" | "Handling" | "Forwarded";
+  escalationLevel: number; // 1 to 4
+  timeSinceAlert: number; // in seconds
+  eta: number | null; // minutes to intervention
+  backupDoctor: string | null;
+  status: "Critical" | "Stable" | "Resolved";
+  notifiedChannels: string[]; // ["Dashboard", "Email", "SMS", "WhatsApp", "Push"]
+  notificationLogs: string[];
+}
+
+const initialDoctorsList: Doctor[] = [
+  { id: "D1", name: "Dr. Smith", specialization: "Pulmonologist", status: "Busy" },
+  { id: "D2", name: "Dr. David", specialization: "Cardiologist", status: "Available" },
+  { id: "D3", name: "Dr. Emma", specialization: "Critical Care", status: "Busy" },
+  { id: "D4", name: "Dr. John", specialization: "Critical Care", status: "Available" },
+];
+
 export default function App() {
   // --- Master Patient State ---
   const [patients, setPatients] = useState<Patient[]>(initialPatients);
   const [isDriftPaused, setIsDriftPaused] = useState<boolean>(false);
 
+  // --- Doctors & Smart Escalation States ---
+  const [doctorsList, setDoctorsList] = useState<Doctor[]>(initialDoctorsList);
+  const [isEscalationFastMode, setIsEscalationFastMode] = useState<boolean>(false);
+  const [escalantAlert, setEscalantAlert] = useState<ActiveAlert>({
+    id: "A1023",
+    patientName: "Alice Sepsis Core",
+    bedId: "Bed 05",
+    riskScore: 94,
+    priority: "CRITICAL",
+    vitals: {
+      hr: 140,
+      spo2: 82,
+      bp: "85/55",
+      temp: 103,
+    },
+    assignedDoctor: "Dr. Emma",
+    assignedDoctorStatus: "Not Responding",
+    escalationLevel: 1,
+    timeSinceAlert: 0,
+    eta: null,
+    backupDoctor: "Dr. John",
+    status: "Critical",
+    notifiedChannels: ["Dashboard"],
+    notificationLogs: ["[00:00:00] Emergency Detected! Ingested vital indicators (SPO2: 82%, HR: 140, Temp: 103°F).", "[00:00:01] Dashboard Critical Beacon activated in Central Command HUD."],
+  });
+
   // --- Monitored Bed Selection ---
   const [activePatientId, setActivePatientId] = useState<string>("P108"); // starts with Jenkins, Sarah (ICU-08)
 
   // --- Navigation Tabs ---
-  const [activeTab, setActiveTab] = useState<"live" | "table" | "command" | "kaggle" | "presentation">("live");
+  const [activeTab, setActiveTab] = useState<"live" | "table" | "command" | "kaggle" | "presentation" | "escalation" | "ecosystem">("live");
+
+  // --- Wearable & Future Ecosystem Simulation States ---
+  const [wearableVitals, setWearableVitals] = useState({
+    hr: 125,
+    spo2: 87,
+    ecg: "Irregular (AFib detected)",
+    steps: 1420,
+    sleep: 4.2,
+    stress: 84, // out of 100
+  });
+  const [wearablePulseStatus, setWearablePulseStatus] = useState<"abnormal" | "stable" | "afib">("abnormal");
+  const [familyNotifySent, setFamilyNotifySent] = useState<boolean>(false);
+  const [ambulanceStatus, setAmbulanceStatus] = useState<"idle" | "booking" | "dispatched" | "arrived">("idle");
+  const [ambulanceEta, setAmbulanceEta] = useState<number>(6);
+  const [voiceNurseQuery, setVoiceNurseQuery] = useState<string>("");
+  const [voiceNurseAnswer, setVoiceNurseAnswer] = useState<string>("Select an oracle prompt above or ask a clinical question to activate the Voice AI Nurse.");
+  const [voiceNurseIsTyping, setVoiceNurseIsTyping] = useState<boolean>(false);
+  const [digitalTwinOptions, setDigitalTwinOptions] = useState({
+    oxygen: false,
+    antibiotics: false,
+    fluids: false,
+  });
+  const [twinSurvivalChance, setTwinSurvivalChance] = useState<number>(70);
+  const [twinLog, setTwinLog] = useState<string[]>([
+    "Virtual Baseline: Alice's Sepsis simulation loaded.",
+    "Survival likelihood estimated at 70% with standard diagnostic delay."
+  ]);
+
+  // --- Smart Escalation Helper Handlers ---
+  const triggerEscalationScenario = (patientKey: "alice" | "bob" | "stable") => {
+    if (patientKey === "alice") {
+      setEscalantAlert({
+        id: "A1023",
+        patientName: "Alice Sepsis Core",
+        bedId: "Bed 05",
+        riskScore: 94,
+        priority: "CRITICAL",
+        vitals: {
+          hr: 140,
+          spo2: 82,
+          bp: "85/55",
+          temp: 103,
+        },
+        assignedDoctor: "Dr. Emma",
+        assignedDoctorStatus: "Not Responding",
+        escalationLevel: 1,
+        timeSinceAlert: 0,
+        eta: null,
+        backupDoctor: "Dr. John",
+        status: "Critical",
+        notifiedChannels: ["Dashboard"],
+        notificationLogs: [
+          `[00:00:00] 🔍 Ingested raw real-time physiological indicators (SPO2 82%, HR 140 bpm, Temp 103°F).`,
+          `[00:00:01] 🧠 CareSync AI computed Risk Level 94% [CRITICAL]. Identified high Sepsis probability.`,
+          `[00:00:02] 🚨 Central Command HUD warning sirens triggered. Level 1 pager dispatched to Primary Doctor Dr. Emma (status: Busy).`
+        ]
+      });
+    } else if (patientKey === "bob") {
+      setEscalantAlert({
+        id: "A1024",
+        patientName: "Bob Heart Shock",
+        bedId: "Bed 12",
+        riskScore: 91,
+        priority: "CRITICAL",
+        vitals: {
+          hr: 128,
+          spo2: 86,
+          bp: "80/50",
+          temp: 97.5,
+        },
+        assignedDoctor: "Dr. David",
+        assignedDoctorStatus: "Not Responding",
+        escalationLevel: 1,
+        timeSinceAlert: 0,
+        eta: null,
+        backupDoctor: "Dr. John",
+        status: "Critical",
+        notifiedChannels: ["Dashboard", "SMS"],
+        notificationLogs: [
+          `[00:00:00] 🔍 Cardiogenic feedback loop processed for Bob Heart Shock (BP 80/50, SPO2 86%).`,
+          `[00:00:01] 🧠 Mean Arterial Pressure (MAP) is dangerously low. Critical Heart Failure exacerbation flagged.`,
+          `[00:00:02] 📱 Level 1 notice dispatched to Primary Cardiologist Dr. David (status: Available).`
+        ]
+      });
+    } else {
+      setEscalantAlert({
+        id: "A1020",
+        patientName: "Normal Ward Surveillance",
+        bedId: "Bed 19",
+        riskScore: 12,
+        priority: "STABLE",
+        vitals: {
+          hr: 72,
+          spo2: 99,
+          bp: "120/80",
+          temp: 98.6,
+        },
+        assignedDoctor: "Dr. Smith",
+        assignedDoctorStatus: "Handling",
+        escalationLevel: 1,
+        timeSinceAlert: 0,
+        eta: null,
+        backupDoctor: null,
+        status: "Stable",
+        notifiedChannels: ["Dashboard"],
+        notificationLogs: [`[00:00:00] Ward conditions normalized. System in standard background surveillance loop.`]
+      });
+    }
+  };
+
+  const handleDoctorAccept = () => {
+    setEscalantAlert(prev => {
+      const logs = [...prev.notificationLogs];
+      const m = Math.floor(prev.timeSinceAlert / 60);
+      const s = prev.timeSinceAlert % 60;
+      const tStr = `[${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}]`;
+      
+      logs.push(`${tStr} ✅ Alert Accepted! ${prev.assignedDoctor} dispatched explicit bedside confirm.`);
+      logs.push(`${tStr} ⏳ Calculated Time to Intervention (ETI) active: 2.0 minutes. Safe coverage achieved.`);
+      return {
+        ...prev,
+        assignedDoctorStatus: "Handling",
+        eta: 2,
+        notificationLogs: logs
+      };
+    });
+  };
+
+  const handleDoctorForward = () => {
+    setEscalantAlert(prev => {
+      const logs = [...prev.notificationLogs];
+      const m = Math.floor(prev.timeSinceAlert / 60);
+      const s = prev.timeSinceAlert % 60;
+      const tStr = `[${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}]`;
+      
+      logs.push(`${tStr} ❌ Alert DECLINED / REJECTED by ${prev.assignedDoctor}. Triggering re-allocation protocol.`);
+      
+      // Auto routing: scan doctorsList for first available who is not the current assigned one
+      const nextAvailable = doctorsList.find(d => d.status === "Available" && d.name !== prev.assignedDoctor);
+      const candidateName = nextAvailable ? nextAvailable.name : "Dr. John";
+      
+      logs.push(`${tStr} 🔍 CareSync AI automated routing searching alternative clinical responders...`);
+      logs.push(`${tStr} 🔄 Auto-assigned secondary specialist ${candidateName} (Critical Care · Available) as active prime lead.`);
+      
+      return {
+        ...prev,
+        assignedDoctorStatus: "Not Responding",
+        assignedDoctor: candidateName,
+        notificationLogs: logs,
+        eta: nextAvailable ? 3 : 1
+      };
+    });
+  };
+
+  const handleManualEscalate = () => {
+    setEscalantAlert(prev => {
+      if (prev.escalationLevel >= 4) return prev;
+      const logs = [...prev.notificationLogs];
+      const m = Math.floor(prev.timeSinceAlert / 60);
+      const s = prev.timeSinceAlert % 60;
+      const tStr = `[${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}]`;
+      
+      const newLevel = prev.escalationLevel + 1;
+      logs.push(`${tStr} ⚡ Manual Escalation overridden by Ward Coordinator. Upgrading to Level ${newLevel}.`);
+      
+      const nextChannels = [...prev.notifiedChannels];
+      if (newLevel === 2) {
+        if (!nextChannels.includes("SMS")) nextChannels.push("SMS");
+        if (!nextChannels.includes("Email")) nextChannels.push("Email");
+      } else if (newLevel === 3) {
+        if (!nextChannels.includes("WhatsApp")) nextChannels.push("WhatsApp");
+      } else if (newLevel === 4) {
+        if (!nextChannels.includes("Push")) nextChannels.push("Push");
+      }
+
+      return {
+        ...prev,
+        escalationLevel: newLevel,
+        notificationLogs: logs,
+        notifiedChannels: nextChannels
+      };
+    });
+  };
+
+  const toggleDoctorStatus = (docId: string) => {
+    setDoctorsList(prev => 
+      prev.map(d => {
+        if (d.id === docId) {
+          const nextStatus = d.status === "Available" ? "Busy" : "Available";
+          return { ...d, status: nextStatus };
+        }
+        return d;
+      })
+    );
+  };
+
+  // --- Wearable & Future Ecosystem Helper Handlers ---
+  const setWearableScenario = (scenario: "stable" | "hypoxia" | "afib") => {
+    setWearablePulseStatus(scenario);
+    setFamilyNotifySent(false);
+    if (scenario === "stable") {
+      setWearableVitals({
+        hr: 72,
+        spo2: 98,
+        ecg: "Normal Sinus Rhythm",
+        steps: 8420,
+        sleep: 7.5,
+        stress: 24,
+      });
+    } else if (scenario === "hypoxia") {
+      setWearableVitals({
+        hr: 125,
+        spo2: 87,
+        ecg: "Sinus Tachycardia",
+        steps: 1420,
+        sleep: 4.2,
+        stress: 84,
+      });
+    } else {
+      setWearableVitals({
+        hr: 142,
+        spo2: 91,
+        ecg: "Irregular AFib detected (High HRV)",
+        steps: 2200,
+        sleep: 3.1,
+        stress: 92,
+      });
+    }
+  };
+
+  const handleToggleTwinOption = (option: "oxygen" | "antibiotics" | "fluids") => {
+    setDigitalTwinOptions(prev => {
+      const updated = { ...prev, [option]: !prev[option] };
+      let score = 70;
+      const logs = ["Virtual Patient: Simulating alterations in real time..."];
+      
+      if (updated.oxygen) {
+        score += 12;
+        logs.push("✓ Standardized high-humidity Oxygen Enrichment activated (+12% oxygen delivery saturation).");
+      } else {
+        logs.push("⚠ Lacking high-flow oxygen. Hypoxia hazard continues.");
+      }
+      
+      if (updated.antibiotics) {
+        score += 15;
+        logs.push("✓ Intravenous empiric Sepsis antibiotics administered (+15% bacterial clearance target).");
+      } else {
+        logs.push("⚠ Lacking antibiotic dosage. Bacterial replication is unbound.");
+      }
+      
+      if (updated.fluids) {
+        score += 8;
+        logs.push("✓ Bolus crystalloid fluid resuscitation initiated (+8% mean arterial pressure stability).");
+      } else {
+        logs.push("⚠ Blood pressure continues hovering at low margins.");
+      }
+      
+      setTwinSurvivalChance(score);
+      setTwinLog(logs);
+      return updated;
+    });
+  };
+
+  const askVoiceAI = (q: string) => {
+    setVoiceNurseIsTyping(true);
+    setVoiceNurseQuery(q);
+    
+    let ans = "";
+    if (q.includes("critical")) {
+      ans = "Analyzing ICU Central Command feeds: Currently 2 patients are flagged as Critical. Sarah Jenkins (Sepsis, 94% Risk index, Oxygen dropped to 82%, Temp 103°F) and Bob Heart Shock (Cardiogenic failure risk, HR 128 bpm, BP 80/50). Immediate bedside intervention is recommended.";
+    } else if (q.includes("Sarah") || q.includes("Sepsis") || q.includes("Why")) {
+      ans = "Sarah's risk score scaled to 94% due to synchronized Sepsis indicators: Her core body temperature surged to 103.0°F indicating systemic inflammatory response syndrome (SIRS), paired with progressive arterial hypoxia reaching 82% SPO2 and tachycardia at 140 bpm. The deterministic local edge model triggers an urgent escalation pathway.";
+    } else if (q.includes("twin")) {
+      ans = "The CareSync Digital Twin performs micro-simulations of bedside alterations: Activating Oxygen Enrichment increases survival expectations from 70% to 82%. Adding intravenous empiric antibiotics and crystalloid fluid resuscitation stabilizes her risk of mortality down to less than 5% with 95% survival path confidence.";
+    } else if (q.includes("outbreak") || q.includes("Disease")) {
+      ans = "Early Warning clustering is active: CareSync isolated 5 synchronous cases of high-fever anomalies in the West Ward. Clinical workflow recommends an local airborne quarantine sweep and preventative testing block to buffer county public health containment.";
+    } else {
+      ans = "Standard monitoring limits look functional. Continuous hospital IoT edge streams indicate 98.2% telemetry data fidelity across all bed slots on the active ward roster.";
+    }
+
+    setTimeout(() => {
+      setVoiceNurseAnswer(ans);
+      setVoiceNurseIsTyping(false);
+    }, 400);
+  };
 
   // --- Clicked Patient Detail Modal ---
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
@@ -299,6 +648,7 @@ export default function App() {
   const [datasetSuccess, setDatasetSuccess] = useState<string | null>(null);
   const [isLabbing, setIsLabbing] = useState(false);
   const [currentSlide, setCurrentSlide] = useState(0);
+  const [isVitalsOpen, setIsVitalsOpen] = useState(false);
 
   const loadAndInjectDataset = async (datasetKey: "sepsis" | "heart" | "maternal", filename: string) => {
     setIsLabbing(true);
@@ -696,6 +1046,66 @@ export default function App() {
     const interval = setInterval(updateClock, 1000);
     return () => clearInterval(interval);
   }, []);
+
+  // --- Smart Escalation Clock Ticker Effect ---
+  useEffect(() => {
+    if (escalantAlert.status !== "Critical") return;
+    
+    const tickRate = isEscalationFastMode ? 5 : 1; 
+    const timer = setInterval(() => {
+      setEscalantAlert(prev => {
+        if (prev.status !== "Critical" || prev.assignedDoctorStatus === "Handling") {
+          return prev;
+        }
+
+        const nextTime = prev.timeSinceAlert + tickRate;
+        let nextLevel = prev.escalationLevel;
+        const nextLogs = [...prev.notificationLogs];
+        const nextChannels = [...prev.notifiedChannels];
+
+        const formatTime = (sec: number) => {
+          const m = Math.floor(sec / 60);
+          const s = sec % 60;
+          return `[${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}]`;
+        };
+
+        // Transition from Level 1 -> 2
+        if (prev.timeSinceAlert < 30 && nextTime >= 30) {
+          nextLevel = 2;
+          nextLogs.push(`${formatTime(30)} ⏳ Level 1 Timeout for ${prev.assignedDoctor} (No response). Escalating...`);
+          nextLogs.push(`${formatTime(31)} 📱 Level 2 Activated: Dispatched alert to Cardiology Specialist.`);
+          if (!nextChannels.includes("Email")) nextChannels.push("Email");
+          if (!nextChannels.includes("SMS")) nextChannels.push("SMS");
+        }
+
+        // Transition from Level 2 -> 3
+        if (prev.timeSinceAlert < 60 && nextTime >= 60) {
+          nextLevel = 3;
+          nextLogs.push(`${formatTime(60)} ⏳ Level 2 Response clock expired. Critical specialist assigned is busy.`);
+          nextLogs.push(`${formatTime(62)} 💬 Level 3 Activated: Direct routing to ICU Nurse Station & Paging Roster.`);
+          if (!nextChannels.includes("WhatsApp")) nextChannels.push("WhatsApp");
+        }
+
+        // Transition from Level 3 -> 4
+        if (prev.timeSinceAlert < 95 && nextTime >= 95) {
+          nextLevel = 4;
+          nextLogs.push(`${formatTime(95)} 🚨 Level 3 Timeout. Life-threatening duration threshold exceeded!`);
+          nextLogs.push(`${formatTime(97)} 🌍 Level 4 Activated: Initiating Hospital-wide Emergency Broadcast & FCM Mobile Push Alarm.`);
+          if (!nextChannels.includes("Push")) nextChannels.push("Push");
+        }
+
+        return {
+          ...prev,
+          timeSinceAlert: nextTime,
+          escalationLevel: nextLevel,
+          notifiedChannels: nextChannels,
+          notificationLogs: nextLogs
+        };
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [escalantAlert.status, isEscalationFastMode, doctorsList]);
 
   // --- NIBP Countdown Timer ---
   useEffect(() => {
@@ -1120,18 +1530,18 @@ export default function App() {
       `}</style>
 
       {/* --- TOPBAR (44px) --- */}
-      <header id="topbar" className="h-[44px] border-b border-slate-200 px-4 flex items-center justify-between bg-white shadow-sm z-10 text-slate-800 shrink-0">
-        <div className="flex items-center space-x-4 text-[11px] h-full">
-          <div className="flex flex-col select-none justify-center">
-            <span className="font-bold text-[12px] tracking-wider text-slate-900 font-mono">CARESYNC AI</span>
-            <span className="text-[7.5px] text-emerald-600 font-bold tracking-widest uppercase font-mono">COMMAND CENTER</span>
+      <header id="topbar" className="h-[44px] border-b border-slate-200 px-2 sm:px-4 flex items-center justify-between bg-white shadow-sm z-10 text-slate-800 shrink-0 select-none">
+        <div className="flex items-center space-x-1.5 sm:space-x-4 text-[11px] h-full overflow-hidden">
+          <div className="flex flex-col select-none justify-center shrink-0">
+            <span className="font-bold text-[10px] sm:text-[12px] tracking-wider text-slate-900 font-mono">CARESYNC</span>
+            <span className="text-[6.5px] sm:text-[7.5px] text-emerald-600 font-bold tracking-widest uppercase font-mono">AI MONITOR</span>
           </div>
 
-          {/* Tab Switchers */}
-          <div className="flex h-full border-l border-slate-200 ml-2">
+          {/* Tab Switchers (Scrollable on small screens) */}
+          <div className="flex h-full border-l border-slate-200 ml-1 sm:ml-2 overflow-x-auto whitespace-nowrap scrollbar-none flex-nowrap shrink max-w-[120px] xs:max-w-[180px] sm:max-w-xs md:max-w-none">
             <button
               onClick={() => setActiveTab("live")}
-              className={`px-3 text-[9.5px] font-bold tracking-wider uppercase h-full transition-all border-r border-slate-100 font-mono ${
+              className={`px-2 sm:px-3 text-[9px] sm:text-[9.5px] shrink-0 font-bold tracking-wider uppercase h-full transition-all border-r border-slate-100 font-mono ${
                 activeTab === "live"
                   ? "bg-[#E6F4EA] text-[#059669] border-b-2 border-[#10B981]"
                   : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"
@@ -1141,7 +1551,7 @@ export default function App() {
             </button>
             <button
               onClick={() => setActiveTab("table")}
-              className={`px-3 text-[9.5px] font-bold tracking-wider uppercase h-full transition-all border-r border-slate-100 font-mono ${
+              className={`px-2 sm:px-3 text-[9px] sm:text-[9.5px] shrink-0 font-bold tracking-wider uppercase h-full transition-all border-r border-slate-100 font-mono ${
                 activeTab === "table"
                   ? "bg-[#FFF4E5] text-[#D97706] border-b-2 border-[#F59E0B]"
                   : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"
@@ -1151,7 +1561,7 @@ export default function App() {
             </button>
             <button
               onClick={() => setActiveTab("command")}
-              className={`px-3 text-[9.5px] font-bold tracking-wider uppercase h-full transition-all border-r border-slate-100 font-mono ${
+              className={`px-2 sm:px-3 text-[9px] sm:text-[9.5px] shrink-0 font-bold tracking-wider uppercase h-full transition-all border-r border-slate-100 font-mono ${
                 activeTab === "command"
                   ? "bg-[#F3E8FF] text-[#6D28D9] border-b-2 border-[#8B5CF6]"
                   : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"
@@ -1161,7 +1571,7 @@ export default function App() {
             </button>
             <button
               onClick={() => setActiveTab("kaggle")}
-              className={`px-3 text-[9.5px] font-bold tracking-wider uppercase h-full transition-all border-r border-slate-100 font-mono ${
+              className={`px-2 sm:px-3 text-[9px] sm:text-[9.5px] shrink-0 font-bold tracking-wider uppercase h-full transition-all border-r border-slate-100 font-mono ${
                 activeTab === "kaggle"
                   ? "bg-[#FEFCE8] text-[#A16207] border-b-2 border-[#EAB308]"
                   : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"
@@ -1170,11 +1580,35 @@ export default function App() {
               Kaggle Lab
             </button>
             <button
+               onClick={() => {
+                 setActiveTab("escalation");
+               }}
+               className={`px-2 sm:px-3 text-[9px] sm:text-[9.5px] shrink-0 font-bold tracking-wider uppercase h-full transition-all border-r border-slate-100 font-mono ${
+                 activeTab === "escalation"
+                   ? "bg-[#FAF5FF] text-[#7E22CE] border-b-2 border-[#9333EA] font-extrabold"
+                   : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"
+               }`}
+            >
+              🚨 Smart Escalation
+            </button>
+            <button
+               onClick={() => {
+                 setActiveTab("ecosystem");
+               }}
+               className={`px-2 sm:px-3 text-[9px] sm:text-[9.5px] shrink-0 font-bold tracking-wider uppercase h-full transition-all border-r border-slate-100 font-mono ${
+                 activeTab === "ecosystem"
+                   ? "bg-[#ECFDF5] text-[#047857] border-b-2 border-[#059669] font-extrabold"
+                   : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"
+               }`}
+            >
+              🌐 IoMT Ecosystem
+            </button>
+            <button
               onClick={() => {
                 setActiveTab("presentation");
                 setCurrentSlide(0);
               }}
-              className={`px-3 text-[9.5px] font-bold tracking-wider uppercase h-full transition-all border-r border-slate-100 font-mono ${
+              className={`px-2 sm:px-3 text-[9px] sm:text-[9.5px] shrink-0 font-bold tracking-wider uppercase h-full transition-all border-r border-slate-100 font-mono ${
                 activeTab === "presentation"
                   ? "bg-slate-100 text-slate-800 border-b-2 border-slate-600 font-extrabold"
                   : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"
@@ -1184,7 +1618,7 @@ export default function App() {
             </button>
           </div>
 
-          <div className="border-l border-slate-200 pl-4 hidden md:flex items-center space-x-1">
+          <div className="border-l border-slate-200 pl-4 hidden md:flex items-center space-x-1 shrink-0">
             <span className="text-slate-400">ACTIVE: </span>
             <span className="font-semibold text-slate-800">{activePatient.name}</span>
             <span className="text-[9px] bg-red-50 px-1.5 py-0.2 border border-red-200 tracking-normal text-red-600 font-bold ml-1 rounded-sm uppercase font-mono">
@@ -1194,9 +1628,10 @@ export default function App() {
         </div>
 
         {/* Alarms, Dot Pulse, Live clock */}
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center space-x-1.5 sm:space-x-3 shrink-0">
+          
           {/* Active flashing alarm pills of the ACTIVELY MONITORED patient right now */}
-          <div id="alarm-pills-container" className="flex items-center space-x-2">
+          <div id="alarm-pills-container" className="hidden lg:flex items-center space-x-2">
             {activeAlarmsSummary.map((alarm, idx) => {
               if (!alarm.active) return null;
               const isCrit = alarm.level === "critical";
@@ -1217,7 +1652,27 @@ export default function App() {
             })}
           </div>
 
-          <div className="flex items-center space-x-1.5 border-l border-slate-200 pl-3">
+          {/* Compact alert warning label for custom mobile displays */}
+          {activeAlarmsSummary.some(a => a.active) && (
+            <div 
+              onClick={() => setSelectedPatientId(activePatient.id)}
+              className="lg:hidden flex items-center justify-center p-1 font-mono rounded-sm cursor-pointer bg-red-50 text-red-600 border border-red-200"
+              title="Active Critical Alerts present for patient"
+            >
+              <AlertTriangle size={13} className="animate-bounce" />
+            </div>
+          )}
+
+          {/* Mobile Vitals Sidebar Toggle */}
+          <button
+            onClick={() => setIsVitalsOpen(!isVitalsOpen)}
+            className="lg:hidden px-2 py-1 text-[8px] sm:text-[9.5px] font-bold uppercase tracking-wider bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-sm font-mono flex items-center space-x-1 transition-colors"
+          >
+            <Activity size={10} className="text-emerald-600 animate-pulse shrink-0" />
+            <span>{isVitalsOpen ? "Hide Vitals" : "Vitals"}</span>
+          </button>
+
+          <div className="hidden xs:flex items-center space-x-1.5 border-l border-slate-200 pl-3">
             <span className="text-[9px] text-slate-400 font-bold font-mono">PULSE</span>
             <div className="relative flex items-center justify-center w-3 h-3">
               <span className="absolute w-2 h-2 bg-[#10B981] rounded-full animate-pulse-dot"></span>
@@ -1225,7 +1680,7 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center space-x-2 border-l border-slate-200 pl-3 text-sm text-slate-500 font-bold tracking-wider select-none font-mono">
+          <div className="hidden sm:flex items-center space-x-2 border-l border-slate-200 pl-3 text-sm text-slate-500 font-bold tracking-wider select-none font-mono">
             <Clock size={12} className="text-slate-400" />
             <span id="systime-clock" className="text-[12px]">{timeStr}</span>
           </div>
@@ -1413,15 +1868,15 @@ export default function App() {
               </div>
 
               {/* Floating EPIC EDI Gauge */}
-              <div id="floating-edi-panel" style={{ contentVisibility: "auto" }} className="absolute top-3 right-3 w-[140px] bg-white/94 backdrop-blur-sm border border-slate-200 p-2.5 z-20 flex flex-col select-none text-slate-800 shadow-md rounded-sm">
-                <div className="text-[8px] font-bold tracking-wider text-slate-400 uppercase flex items-center justify-between font-mono">
+              <div id="floating-edi-panel" style={{ contentVisibility: "auto" }} className="absolute top-2 right-2 sm:top-3 sm:right-3 w-[110px] sm:w-[140px] bg-white/94 backdrop-blur-sm border border-slate-200 p-1.5 sm:p-2.5 z-20 flex flex-col select-none text-slate-800 shadow-md rounded-sm">
+                <div className="text-[7.5px] sm:text-[8px] font-bold tracking-wider text-slate-400 uppercase flex items-center justify-between font-mono">
                   <span>EDI · EPIC</span>
                   <span className="scale-75 text-[#DC2626] font-extrabold animate-pulse">LIVE</span>
                 </div>
 
                 {/* Donut */}
-                <div className="relative w-[90px] h-[90px] mx-auto mt-1.5 flex items-center justify-center">
-                  <svg className="w-full h-full -rotate-90">
+                <div className="relative w-[60px] h-[60px] sm:w-[90px] sm:h-[90px] mx-auto mt-1 sm:mt-1.5 flex items-center justify-center">
+                  <svg className="w-full h-full -rotate-90" viewBox="0 0 90 90">
                     <circle cx="45" cy="45" r={ediR} stroke="#F1F5F9" strokeWidth="4.5" fill="transparent" />
                     <circle
                       cx="45"
@@ -2352,8 +2807,8 @@ export default function App() {
           )}
 
           {activeTab === "presentation" && (
-            <div className="flex-1 overflow-y-auto p-6 bg-slate-50 flex flex-col justify-between" style={{ minHeight: "calc(100vh - 110px)" }}>
-              <div className="max-w-4xl mx-auto w-full bg-white border border-slate-200 shadow-sm rounded-sm p-8 flex-1 flex flex-col justify-between">
+            <div className="flex-1 overflow-y-auto p-3 sm:p-6 bg-slate-50 flex flex-col justify-between" style={{ minHeight: "calc(100vh - 110px)" }}>
+              <div className="max-w-4xl mx-auto w-full bg-white border border-slate-200 shadow-sm rounded-sm p-4 sm:p-8 flex-1 flex flex-col justify-between">
                 
                 {/* Header of Deck */}
                 <div className="flex justify-between items-center border-b border-slate-100 pb-4 mb-6">
@@ -2559,7 +3014,7 @@ export default function App() {
                               <strong className="text-slate-800">Low Operational Risk:</strong> Clinical decisions are always advisory. Doctors and nurses retain ultimate override capability at the bedsides.
                             </li>
                             <li>
-                              <strong className="text-slate-800">Alarm Fatigue Alleviation:</strong> Intelligent threshold stabilization prevents transient noise from triggering multi-room emergency bells.
+                              <strong className="text-slate-800">Smart Escalation Fail-safe:</strong> Automatically escalates alerts through 4 critical levels (Primary, Departmental, ICU Station, and Emergency Broadcast) with interactive on-device Acceptance Handshaking to optimize Estimated Time to Intervention (ETI).
                             </li>
                           </ul>
                         </div>
@@ -2684,11 +3139,1054 @@ export default function App() {
             </div>
           )}
 
+          {activeTab === "escalation" && (
+            <div className="flex-1 overflow-y-auto p-3 sm:p-6 bg-slate-100 flex flex-col justify-between" style={{ minHeight: "calc(100vh - 110px)" }}>
+              <div className="max-w-6xl mx-auto w-full bg-white border border-slate-200 shadow-sm rounded-sm p-4 sm:p-6 flex-1 flex flex-col">
+                
+                {/* Header segment */}
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-slate-100 pb-4 mb-4 select-none">
+                  <div>
+                    <div className="flex items-center space-x-2">
+                      <span className="h-2 w-2 rounded-full bg-[#9333EA] animate-pulse"></span>
+                      <h2 className="text-xs font-bold tracking-widest text-[#7E22CE] uppercase font-mono">CareSync AI Smart Escalation</h2>
+                    </div>
+                    <h1 className="text-[18px] sm:text-[20px] font-extrabold text-slate-900 tracking-tight mt-0.5">Clinical Crisis Automation Deck</h1>
+                    <p className="text-[10px] text-slate-500 font-semibold mt-0.5">Automates hospital dispatch when primary assigned clinicians are busy or unresponsive.</p>
+                  </div>
+                  
+                  {/* Scenario Trigger Board */}
+                  <div className="flex flex-wrap items-center gap-1.5 mt-3 md:mt-0 font-mono">
+                    <button
+                      onClick={() => triggerEscalationScenario("alice")}
+                      className={`px-2.5 py-1.5 text-[9px] font-extrabold uppercase rounded-sm border transition-all cursor-pointer ${
+                        escalantAlert.id === "A1023" && escalantAlert.status === "Critical"
+                          ? "bg-purple-900 text-white border-purple-950 shadow-md"
+                          : "bg-purple-50 text-[#7E22CE] hover:bg-purple-100 border-purple-200"
+                      }`}
+                    >
+                      🚨 Alice (Sepsis Lead)
+                    </button>
+                    <button
+                      onClick={() => triggerEscalationScenario("bob")}
+                      className={`px-2.5 py-1.5 text-[9px] font-extrabold uppercase rounded-sm border transition-all cursor-pointer ${
+                        escalantAlert.id === "A1024" && escalantAlert.status === "Critical"
+                          ? "bg-pink-900 text-white border-pink-950 shadow-md"
+                          : "bg-pink-50 text-pink-700 hover:bg-pink-100 border-pink-200"
+                      }`}
+                    >
+                      🩺 Bob (Cardiogenic Shock)
+                    </button>
+                    <button
+                      onClick={() => triggerEscalationScenario("stable")}
+                      className={`px-2.5 py-1.5 text-[9px] font-extrabold uppercase rounded-sm border transition-all cursor-pointer ${
+                        escalantAlert.status === "Stable"
+                          ? "bg-slate-800 text-white border-slate-900"
+                          : "bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-250"
+                      }`}
+                    >
+                      🛡️ Reset Stable
+                    </button>
+
+                    <button
+                      onClick={() => setIsEscalationFastMode(!isEscalationFastMode)}
+                      className={`ml-1 px-2 py-1.5 text-[8.5px] font-bold uppercase rounded-sm border flex items-center space-x-1 cursor-pointer transition-all ${
+                        isEscalationFastMode 
+                          ? "bg-red-500 text-white border-red-650 animate-pulse font-extrabold"
+                          : "bg-slate-150 text-slate-750 hover:bg-slate-200 border-slate-300"
+                      }`}
+                      title="Simulates 30-second delay countdowns at 5x rapid speed for faster testing"
+                    >
+                      <RefreshCw size={10} className={`${isEscalationFastMode ? "animate-spin" : ""}`} />
+                      <span>{isEscalationFastMode ? "5x FAST-FORWARD ACTIVE" : "FAST-FORWARD (5x)"}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Main simulation grids */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 flex-1">
+                  
+                  {/* Left block (7 cols): The active incident HUD & Doctors Availability */}
+                  <div className="lg:col-span-7 flex flex-col space-y-4">
+                    
+                    {/* Active Incident status console */}
+                    <div className="border border-slate-200 rounded-sm bg-white overflow-hidden shadow-xs flex flex-col">
+                      <div className={`p-2.5 flex justify-between items-center ${escalantAlert.status === "Critical" ? "bg-red-650 text-white" : "bg-slate-750 text-white"}`}>
+                        <div className="flex items-center space-x-2 font-mono text-[9px] sm:text-[10px] font-bold">
+                          <span className="animate-pulse">●</span>
+                          <span>INCIDENT REPORT #{escalantAlert.id}</span>
+                        </div>
+                        <div className="px-2 py-0.5 bg-white/20 text-[8.5px] font-bold rounded-sm uppercase tracking-wider font-mono">
+                          STATUS: {escalantAlert.priority}
+                        </div>
+                      </div>
+
+                      <div className="p-4 bg-slate-50/50 border-b border-indigo-50/50 grid grid-cols-2 gap-4">
+                        <div>
+                          <span className="text-[8px] font-semibold text-slate-450 uppercase block tracking-wider font-mono">PATIENT IDENTIFICATION</span>
+                          <span className="text-sm font-extrabold text-slate-800 font-sans block">{escalantAlert.patientName}</span>
+                          <span className="text-[10px] text-[#A16207] bg-amber-50 px-1.5 py-0.2 rounded-sm border border-amber-250 font-bold mt-1 inline-block font-mono">
+                            {escalantAlert.bedId.toUpperCase()} &bull; CRITICAL WARD
+                          </span>
+                        </div>
+
+                        <div className="text-right">
+                          <span className="text-[8px] font-semibold text-slate-450 uppercase block tracking-wider font-mono">CARE ASSISTANCE SUGGESTION</span>
+                          <span className="text-[11px] font-bold text-[#7E22CE] font-sans block mt-0.5">Critical Care ICU Specialist</span>
+                          <span className="text-[16px] font-black text-rose-600 font-mono block">RISK INDEX: {escalantAlert.riskScore}%</span>
+                        </div>
+                      </div>
+
+                      {/* Vital Indicator strip */}
+                      <div className="p-3 bg-white grid grid-cols-4 gap-2 border-b border-slate-100 select-none">
+                        <div className="p-2 border border-slate-200 rounded-sm text-center">
+                          <span className="text-[7.5px] font-bold text-slate-400 uppercase block font-mono font-mono">HEART RATE</span>
+                          <span className={`text-[13px] font-extrabold font-mono block ${escalantAlert.vitals.hr > 120 ? "text-rose-600" : "text-emerald-600"}`}>
+                            {escalantAlert.vitals.hr} <span className="text-[8px] text-slate-400">bpm</span>
+                          </span>
+                        </div>
+                        <div className="p-2 border border-slate-200 rounded-sm text-center">
+                          <span className="text-[7.5px] font-bold text-slate-400 uppercase block font-mono font-mono">OXYGEN SAT</span>
+                          <span className={`text-[13px] font-extrabold font-mono block ${escalantAlert.vitals.spo2 < 90 ? "text-red-500" : "text-emerald-600"}`}>
+                            {escalantAlert.vitals.spo2}%
+                          </span>
+                        </div>
+                        <div className="p-2 border border-slate-200 rounded-sm text-center">
+                          <span className="text-[7.5px] font-bold text-slate-400 uppercase block font-mono font-mono">BLOOD PRESSURE</span>
+                          <span className="text-[13px] font-extrabold font-mono text-indigo-755 block">
+                            {escalantAlert.vitals.bp}
+                          </span>
+                        </div>
+                        <div className="p-2 border border-slate-200 rounded-sm text-center">
+                          <span className="text-[7.5px] font-bold text-slate-400 uppercase block font-mono font-mono">BODY TEMP</span>
+                          <span className={`text-[13px] font-extrabold font-mono block ${escalantAlert.vitals.temp >= 38.3 || escalantAlert.vitals.temp >= 100 ? "text-red-500" : "text-emerald-600"}`}>
+                            {escalantAlert.vitals.temp}°F
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Assigned Doctor Area */}
+                      <div className="p-4 bg-slate-50 grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="p-3 bg-white rounded-sm border border-slate-200">
+                          <span className="text-[8px] font-bold text-slate-450 uppercase block tracking-wider font-mono">PRIMARY CLINICIAN</span>
+                          <div className="flex items-center space-x-2 mt-1">
+                            <div className="h-6 w-6 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-black text-indigo-700 border border-indigo-200 font-mono">
+                              {escalantAlert.assignedDoctor?.charAt(4) || "D"}
+                            </div>
+                            <div>
+                              <span className="text-xs font-extrabold text-slate-700 font-mono block">{escalantAlert.assignedDoctor}</span>
+                              <span className="text-[8.5px] text-slate-450 block font-sans font-semibold">Assigned Ward Lead</span>
+                            </div>
+                          </div>
+
+                          <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between font-mono">
+                            <span className="text-[8.5px] font-bold text-slate-400">PAGER RESPONSE:</span>
+                            {escalantAlert.assignedDoctorStatus === "Handling" ? (
+                              <span className="text-[8px] bg-emerald-50 text-emerald-700 border border-emerald-250 px-1.5 py-0.2 rounded font-black uppercase">
+                                ✓ ACCEPTED (ACTIVE)
+                              </span>
+                            ) : (
+                              <span className="text-[8px] bg-rose-50 text-rose-600 border border-rose-250 px-1.5 py-0.2 rounded font-black uppercase animate-pulse">
+                                ❌ NOT RESPONDING (L{escalantAlert.escalationLevel})
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="p-3 bg-white rounded-sm border border-slate-200 flex flex-col justify-between">
+                          <div>
+                            <span className="text-[8px] font-bold text-slate-450 uppercase block tracking-wider font-mono">ESTIMATED RESPONSE TIMING</span>
+                            {escalantAlert.assignedDoctorStatus === "Handling" ? (
+                              <div className="mt-1 flex items-baseline space-x-1.5 text-emerald-700">
+                                <span className="text-[17px] font-black leading-none font-mono">~2.0</span>
+                                <span className="text-[8.5px] font-bold uppercase font-mono">minutes ETI (Bedside arrival)</span>
+                              </div>
+                            ) : (
+                              <div className="mt-1 flex items-baseline space-x-1.5 text-rose-600 text-sm font-bold font-mono font-mono">
+                                <span className="text-[15px] font-extrabold leading-none animate-pulse">-- : --</span>
+                                <span className="text-[8.5px] text-slate-450 font-normal">Awaiting bedside confirmation</span>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="pt-2 border-t border-slate-100 flex items-center justify-between font-mono text-[8px] text-slate-400">
+                            <span>BACKUP: {escalantAlert.backupDoctor ? escalantAlert.backupDoctor : "Central ICU Team"}</span>
+                            <span>FAILFAST LIMIT: 5 MINS</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Doctors Availability Table */}
+                    <div className="border border-slate-200 rounded-sm bg-white p-4">
+                      <div className="flex justify-between items-center mb-3">
+                        <div>
+                          <h3 className="text-xs font-extrabold text-slate-800 uppercase tracking-wide font-mono">Care Specialist Roster</h3>
+                          <p className="text-[8.5px] text-slate-400 font-bold">Interactive Availability - Click pill status to toggle Busy/Available</p>
+                        </div>
+                        <span className="text-[7.5px] bg-slate-150 text-slate-500 border border-slate-250 px-1.5 py-0.2 uppercase font-extrabold font-mono">
+                          Live Central Directory
+                        </span>
+                      </div>
+
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-[9px] border-collapse font-mono">
+                          <thead>
+                            <tr className="bg-slate-50 border-b border-slate-200 text-slate-450 text-[8px] font-extrabold uppercase">
+                              <th className="p-2">Specialist Name</th>
+                              <th className="p-2">Focus Specialty</th>
+                              <th className="p-2 text-center">Live Status</th>
+                              <th className="p-2 text-right">Active Priority Duty</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {doctorsList.map((doc) => {
+                              const isTargetAssigned = escalantAlert.assignedDoctor === doc.name && escalantAlert.status === "Critical";
+                              return (
+                                <tr key={doc.id} className={`hover:bg-slate-50/50 transition-colors ${isTargetAssigned ? "bg-purple-50/40" : ""}`}>
+                                  <td className="p-2">
+                                    <div className="flex items-center space-x-1.5">
+                                      <span className={`h-1.5 w-1.5 rounded-full ${isTargetAssigned ? "bg-purple-650 animate-ping" : "bg-slate-300"}`}></span>
+                                      <span className="font-extrabold text-[#1E293B]">{doc.name}</span>
+                                    </div>
+                                  </td>
+                                  <td className="p-2 text-slate-500 font-semibold">{doc.specialization}</td>
+                                  <td className="p-2 text-center">
+                                    <button
+                                      onClick={() => toggleDoctorStatus(doc.id)}
+                                      className={`px-2 py-0.5 text-[8px] font-extrabold rounded-full border cursor-pointer select-none transition-all ${
+                                        doc.status === "Available"
+                                          ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+                                          : "bg-red-50 text-red-650 border-red-200 hover:bg-red-100"
+                                      }`}
+                                    >
+                                      {doc.status === "Available" ? "● AVAILABLE" : "■ BUSY"}
+                                    </button>
+                                  </td>
+                                  <td className="p-2 text-right">
+                                    {isTargetAssigned ? (
+                                      <span className="text-[7.5px] bg-[#9333EA] text-white px-1.5 py-0.2 rounded-sm font-extrabold">Active Incident Respondee</span>
+                                    ) : (
+                                      <span className="text-slate-450 font-normal italic">Ready state</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right block (5 cols): Escalation Hierarchy Progress and Mobile Device Simulator */}
+                  <div className="lg:col-span-5 flex flex-col space-y-4">
+                    
+                    {/* Visual Escalation Progress tower */}
+                    <div className="border border-slate-200 rounded-sm bg-white p-4">
+                      <h3 className="text-xs font-extrabold text-slate-800 uppercase tracking-wide font-mono mb-3.5">Escalation Fail-Safe Stack</h3>
+                      
+                      <div className="space-y-3 font-mono">
+                        
+                        {/* LEVEL 1 CARD */}
+                        <div className={`p-2.5 border rounded-sm flex items-start space-x-3 transition-colors ${
+                          escalantAlert.status === "Critical" && escalantAlert.escalationLevel === 1
+                            ? "border-purple-650 bg-purple-50/50"
+                            : escalantAlert.status === "Critical" && escalantAlert.escalationLevel > 1 
+                              ? "border-slate-200 bg-slate-50/70 opacity-60" 
+                              : "border-slate-250 bg-white"
+                        }`}>
+                          <div className={`h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-extrabold border shrink-0 ${
+                            escalantAlert.escalationLevel >= 1 && escalantAlert.status === "Critical"
+                              ? "bg-[#7E22CE] text-white border-purple-800"
+                              : "bg-slate-100 text-slate-500 border-slate-200"
+                          }`}>
+                            1
+                          </div>
+                          <div className="flex-1 leading-normal text-[9px]">
+                            <div className="flex justify-between items-center">
+                              <span className="font-extrabold text-slate-800 block">Level 1: Clinical Lead Notification</span>
+                              <span className="text-[7px] text-slate-400 uppercase tracking-wider">Delay: 30s limit</span>
+                            </div>
+                            <span className="text-[8px] text-slate-500 font-semibold italic">Alert dispatched to designated specialist pager.</span>
+                            {escalantAlert.escalationLevel === 1 && escalantAlert.status === "Critical" && (
+                              <div className="mt-1 flex items-center justify-between text-[7px] text-red-650 font-extrabold bg-red-50 p-1 rounded">
+                                <span>AWAITING HANDSHAKE OVER PROTOCOL</span>
+                                <span className="animate-pulse">{30 - (escalantAlert.timeSinceAlert % 30)}s remaining</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* LEVEL 2 CARD */}
+                        <div className={`p-2.5 border rounded-sm flex items-start space-x-3 transition-colors ${
+                          escalantAlert.status === "Critical" && escalantAlert.escalationLevel === 2
+                            ? "border-amber-500 bg-amber-50/50"
+                            : escalantAlert.status === "Critical" && escalantAlert.escalationLevel > 2 
+                              ? "border-slate-200 bg-slate-50/70 opacity-60" 
+                              : "border-slate-250 bg-white"
+                        }`}>
+                          <div className={`h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-extrabold border shrink-0 ${
+                            escalantAlert.escalationLevel >= 2 && escalantAlert.status === "Critical"
+                              ? "bg-amber-600 text-white border-amber-700"
+                              : "bg-slate-100 text-slate-500 border-slate-200"
+                          }`}>
+                            2
+                          </div>
+                          <div className="flex-1 leading-normal text-[9px]">
+                            <div className="flex justify-between items-center">
+                              <span className="font-extrabold text-slate-800 block">Level 2: Hospital Department Backup</span>
+                              <span className="text-[7px] text-slate-400 uppercase tracking-wider">Delay: 60s limit</span>
+                            </div>
+                            <span className="text-[8px] text-slate-500 font-semibold italic">Alert routed to clinical supervisor & duty backup roster.</span>
+                            {escalantAlert.escalationLevel === 2 && escalantAlert.status === "Critical" && (
+                              <div className="mt-1 flex items-center justify-between text-[7px] text-amber-700 font-extrabold bg-amber-50 p-1 rounded border border-amber-200">
+                                <span>COMMUNICATING WITH CARDIO/PULM CONSULTANTS</span>
+                                <span className="animate-pulse">{60 - (escalantAlert.timeSinceAlert % 60)}s remaining</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* LEVEL 3 CARD */}
+                        <div className={`p-2.5 border rounded-sm flex items-start space-x-3 transition-colors ${
+                          escalantAlert.status === "Critical" && escalantAlert.escalationLevel === 3
+                            ? "border-orange-550 bg-orange-50/50"
+                            : escalantAlert.status === "Critical" && escalantAlert.escalationLevel > 3 
+                              ? "border-slate-200 bg-slate-50/70 opacity-60" 
+                              : "border-slate-250 bg-white"
+                        }`}>
+                          <div className={`h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-extrabold border shrink-0 ${
+                            escalantAlert.escalationLevel >= 3 && escalantAlert.status === "Critical"
+                              ? "bg-orange-600 text-white border-orange-700"
+                              : "bg-slate-100 text-slate-500 border-slate-200"
+                          }`}>
+                            3
+                          </div>
+                          <div className="flex-1 leading-normal text-[9px]">
+                            <div className="flex justify-between items-center">
+                              <span className="font-extrabold text-slate-800 block">Level 3: ICU Nurse Station Alarms</span>
+                              <span className="text-[7px] text-slate-400 uppercase tracking-wider">Delay: 95s limit</span>
+                            </div>
+                            <span className="text-[8px] text-slate-500 font-semibold italic">Flashes full screen sirens across the ICU central desk monitors.</span>
+                            {escalantAlert.escalationLevel === 3 && escalantAlert.status === "Critical" && (
+                              <div className="mt-1 flex items-center justify-between text-[7px] text-orange-700 font-bold bg-orange-550 p-1 rounded border border-orange-250">
+                                <span>DISTRIBUTED ICU WARD PAGING DEPLOYED</span>
+                                <span className="animate-pulse">{95 - (escalantAlert.timeSinceAlert % 95)}s limit</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* LEVEL 4 CARD */}
+                        <div className={`p-2.5 border rounded-sm flex items-start space-x-3 transition-colors ${
+                          escalantAlert.status === "Critical" && escalantAlert.escalationLevel === 4
+                            ? "border-red-650 bg-red-50/50"
+                            : "border-slate-200 bg-white"
+                        }`}>
+                          <div className={`h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-extrabold border shrink-0 ${
+                            escalantAlert.escalationLevel >= 4 && escalantAlert.status === "Critical"
+                              ? "bg-red-600 text-white border-red-800 animate-bounce"
+                              : "bg-slate-100 text-slate-500 border-slate-200"
+                          }`}>
+                            4
+                          </div>
+                          <div className="flex-1 leading-normal text-[9px]">
+                            <div className="flex justify-between items-center">
+                              <span className="font-extrabold text-slate-800 block">Level 4: Emergency Broadcast sirens</span>
+                              <span className="text-[7px] text-white bg-red-650 px-1 py-0.2 rounded tracking-wider uppercase">ALL CHANNELS ACTIVE</span>
+                            </div>
+                            <span className="text-[8px] text-slate-500 font-semibold italic">Omni-channel broadcast: all available specialists paged. Audio sirens.</span>
+                            {escalantAlert.escalationLevel === 4 && escalantAlert.status === "Critical" && (
+                              <div className="mt-1 text-[7.5px] text-rose-700 font-black flex items-center space-x-1.5 animate-pulse font-mono">
+                                <AlertTriangle size={10} />
+                                <span>HOSPITAL BROADCAST SIRENING & ALL MOBILE FCM PUSH FLUSHED</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Clinician On-Call Device Simulator */}
+                    <div className="border border-slate-250 rounded-sm bg-slate-905 text-white p-4 font-mono bg-slate-900">
+                      
+                      {/* Mobile phone mock screen header */}
+                      <div className="flex justify-between items-center border-b border-slate-800 pb-2 mb-2 text-[8px] text-slate-400 uppercase">
+                        <div className="flex items-center space-x-1 font-mono">
+                          <Activity size={10} className="text-[#059669] animate-pulse" />
+                          <span>CARESYNC PUSH INTERACTION CLIENT</span>
+                        </div>
+                        <span>WiFi Active &bull; SIM CELL-01</span>
+                      </div>
+
+                      {/* Phone Banner Mockup */}
+                      <div className="bg-slate-800 p-2.5 rounded border border-white/10 text-left text-[9.5px] leading-relaxed mb-3">
+                        <div className="flex justify-between items-center text-[8px] border-b border-slate-700 pb-1 mb-1 text-purple-450 uppercase">
+                          <span className="font-extrabold flex items-center space-x-1">
+                            <span>🚨 EMERGENCY CALLOUT</span>
+                          </span>
+                          <span className="font-mono text-slate-500 uppercase">Alert ID: #{escalantAlert.id}</span>
+                        </div>
+                        
+                        <div className="text-slate-250 font-semibold">
+                          Patient: <span className="font-extrabold text-white font-sans">{escalantAlert.patientName}</span> ({escalantAlert.bedId})
+                        </div>
+                        <div className="text-[8.5px] text-slate-405 leading-normal mt-0.5">
+                          Condition Alerting Sepsis risk at <span className="text-rose-500 font-extrabold">{escalantAlert.riskScore}%</span> probability. Vitals indicating HR: {escalantAlert.vitals.hr}bpm, SpO2: {escalantAlert.vitals.spo2}%.
+                        </div>
+                        <div className="mt-1.5 text-[8px] text-indigo-350">
+                          Specialist Assigned: <span className="font-extrabold text-indigo-200">{escalantAlert.assignedDoctor}</span>
+                        </div>
+                      </div>
+
+                      {/* Doctor actions feedback portal */}
+                      <div className="space-y-1.5 text-[9.5px]">
+                        <span className="text-slate-400 text-[8.5px] uppercase font-bold block mb-1">Clinician Interactive Handshake Decision</span>
+                        
+                        {escalantAlert.status === "Critical" && escalantAlert.assignedDoctorStatus !== "Handling" ? (
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <button
+                              onClick={handleDoctorAccept}
+                              className="px-2.5 py-2 hover:bg-emerald-700 bg-emerald-600 text-white font-black uppercase text-[8.5px] rounded border border-emerald-800 cursor-pointer text-center font-mono hover:scale-101 active:scale-99 transition-all"
+                            >
+                              ✓ Accept Case
+                            </button>
+                            <button
+                              onClick={handleDoctorForward}
+                              className="px-2.5 py-2 hover:bg-red-700 bg-red-650 text-white font-black uppercase text-[8.5px] rounded border border-red-800 cursor-pointer text-center font-mono hover:scale-101 active:scale-99 transition-all"
+                            >
+                              ✕ Reject / Route
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="p-2 border border-emerald-555 bg-emerald-950/25 rounded text-center text-[9px] text-[#22C55E] font-black uppercase tracking-wide">
+                            {escalantAlert.status === "Stable" 
+                              ? "Surveillance Active: Bed conditions healthy." 
+                              : `Responded: ${escalantAlert.assignedDoctor} on bedside duty.`}
+                          </div>
+                        )}
+
+                        <button
+                          onClick={handleManualEscalate}
+                          disabled={escalantAlert.escalationLevel >= 4 || escalantAlert.status !== "Critical"}
+                          className={`w-full mt-2 px-2 py-1 border uppercase font-bold text-[8.5px] text-center rounded block cursor-pointer transition-colors ${
+                            escalantAlert.escalationLevel < 4 && escalantAlert.status === "Critical"
+                              ? "bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700"
+                              : "bg-slate-900/40 text-slate-600 border-slate-800 opacity-40 cursor-not-allowed"
+                          }`}
+                        >
+                          ⚡ Bypass Delay Timer: Force Immediate Level-Up
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Dispatch Channel Matrix Indicator & Logs block */}
+                <div className="mt-4 border border-slate-200 rounded-sm bg-white overflow-hidden flex flex-col">
+                  
+                  {/* Comm channel dispatch indicators */}
+                  <div className="bg-slate-50 border-b border-slate-200 p-3 flex flex-wrap items-center justify-between gap-2 select-none font-mono">
+                    <span className="text-[8px] font-extrabold text-slate-450 uppercase tracking-widest mt-0.5">DISPATCH CHANNELS STABILITY:</span>
+                    
+                    <div className="flex flex-wrap items-center gap-1.5 text-[8px] font-bold">
+                      <span className={`px-2 py-0.5 border rounded-sm flex items-center space-x-1 ${
+                        escalantAlert.notifiedChannels.includes("Dashboard") ? "bg-[#E6F4EA] text-[#059669] border-[#10B981]" : "bg-slate-100 text-slate-405 border-slate-200"
+                      }`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${escalantAlert.notifiedChannels.includes("Dashboard") ? "bg-[#059669] animate-ping" : "bg-slate-300"}`}></span>
+                        <span>🖥️ COMMAND HUD</span>
+                      </span>
+
+                      <span className={`px-2 py-0.5 border rounded-sm flex items-center space-x-1 ${
+                        escalantAlert.notifiedChannels.includes("Email") ? "bg-amber-50 text-amber-700 border-amber-250" : "bg-slate-100 text-slate-405 border-slate-200"
+                      }`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${escalantAlert.notifiedChannels.includes("Email") ? "bg-amber-500 animate-ping" : "bg-slate-300"}`}></span>
+                        <span>📧 EMAIL (RESEND)</span>
+                      </span>
+
+                      <span className={`px-2 py-0.5 border rounded-sm flex items-center space-x-1 ${
+                        escalantAlert.notifiedChannels.includes("SMS") ? "bg-[#E0F2FE] text-[#0284C7] border-[#38BDF8]" : "bg-slate-100 text-slate-405 border-slate-200"
+                      }`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${escalantAlert.notifiedChannels.includes("SMS") ? "bg-[#0284C7] animate-ping" : "bg-slate-300"}`}></span>
+                        <span>💬 SMS (TWILIO API)</span>
+                      </span>
+
+                      <span className={`px-2 py-0.5 border rounded-sm flex items-center space-x-1 ${
+                        escalantAlert.notifiedChannels.includes("WhatsApp") ? "bg-green-50 text-green-700 border-green-250" : "bg-slate-100 text-slate-405 border-slate-200"
+                      }`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${escalantAlert.notifiedChannels.includes("WhatsApp") ? "bg-green-600 animate-ping" : "bg-slate-300"}`}></span>
+                        <span>🟢 WHATSAPP BUSINESS</span>
+                      </span>
+
+                      <span className={`px-2 py-0.5 border rounded-sm flex items-center space-x-1 ${
+                        escalantAlert.notifiedChannels.includes("Push") ? "bg-rose-50 text-rose-600 border-rose-250" : "bg-slate-100 text-slate-405 border-slate-200"
+                      }`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${escalantAlert.notifiedChannels.includes("Push") ? "bg-red-600 animate-ping" : "bg-slate-300"}`}></span>
+                        <span>📱 GOOGLE FCM PUSH</span>
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Telemetry Logger component */}
+                  <div className="bg-slate-950 p-4 font-mono text-[9px] text-slate-300 flex-1 flex flex-col justify-between" style={{ minHeight: "150px" }}>
+                    <div className="flex justify-between items-center border-b border-slate-800 pb-2 mb-2 uppercase text-[7.5px] text-slate-500">
+                      <span>Clinical Telemetry logger &bull; real-time failure monitor</span>
+                      <span>ACTIVE FEED RATE: 1000 HZ</span>
+                    </div>
+
+                    <div className="space-y-1.5 flex-1 max-h-[140px] overflow-y-auto pr-1">
+                      {escalantAlert.notificationLogs.slice().reverse().map((logLine, idx) => {
+                        let colorClass = "text-slate-450";
+                        if (logLine.includes("✅")) colorClass = "text-[#10B981] font-bold";
+                        else if (logLine.includes("🚨") || logLine.includes("❌")) colorClass = "text-rose-500 font-extrabold";
+                        else if (logLine.includes("⏳") || logLine.includes("⚡")) colorClass = "text-amber-500 font-bold";
+                        else if (logLine.includes("🔄") || logLine.includes("🔍")) colorClass = "text-[#38BDF8] font-bold";
+
+                        return (
+                          <div key={idx} className={`leading-normal ${colorClass}`}>
+                            {logLine}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="mt-3.5 pt-2 border-t border-slate-900 flex justify-between items-center text-[7.5px] text-slate-500 select-none">
+                      <span>CareSync Automated Dispatching Router Engine &bull; Version 2.0.1 GA-HACKSTORE</span>
+                      <span className="text-indigo-400 uppercase tracking-widest font-bold">FAILFAST DEPLOYMENT SUCCESSFUL</span>
+                    </div>
+                  </div>
+
+                </div>
+
+              </div>
+            </div>
+          )}
+
+          {activeTab === "ecosystem" && (
+            <div className="flex-1 overflow-y-auto p-3 sm:p-6 bg-slate-100 flex flex-col justify-between" style={{ minHeight: "calc(100vh - 110px)" }}>
+              <div className="max-w-7xl mx-auto w-full bg-white border border-slate-200 shadow-sm rounded-sm p-4 sm:p-6 flex-1 flex flex-col">
+                
+                {/* Header segment */}
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-slate-100 pb-4 mb-4 select-none">
+                  <div>
+                    <div className="flex items-center space-x-2">
+                      <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                      <h2 className="text-xs font-bold tracking-widest text-emerald-700 uppercase font-mono">CareSync Omnipresent Health IoT</h2>
+                    </div>
+                    <h1 className="text-[18px] sm:text-[20px] font-extrabold text-slate-900 tracking-tight mt-0.5">🌐 IoMT Wearables & Healthcare Ecosystem</h1>
+                    <p className="text-[10px] text-slate-500 font-semibold mt-0.5">Bridges remote patients, automated ambulance dispatching, Digital Twin forecast simulations, and Chatbot assistance.</p>
+                  </div>
+                  
+                  <div className="flex items-center space-x-2 mt-2 md:mt-0 bg-emerald-50 px-3 py-1.5 border border-emerald-250 rounded font-mono text-[9px] text-emerald-800">
+                    <Sparkles size={11} className="text-emerald-600 animate-pulse" />
+                    <span className="font-extrabold uppercase">CareSync One-Line USP: Any Patient, Anywhere.</span>
+                  </div>
+                </div>
+
+                {/* Main bento structural grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 flex-1">
+                  
+                  {/* LEFT BENTO (Span 4): Smartwatch Device Simulator & iOS Message Center */}
+                  <div className="lg:col-span-4 flex flex-col space-y-4">
+                    
+                    {/* Wearable Watch Block */}
+                    <div className="border border-slate-200 rounded-sm bg-slate-900 text-white p-4 font-mono relative overflow-hidden flex flex-col justify-between animate-[fadeIn_0.5s_ease-out-east]" style={{ minHeight: "330px" }}>
+                      
+                      {/* Background accent */}
+                      <div className="absolute right-[-20px] top-[-20px] h-32 w-32 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none"></div>
+
+                      <div className="flex justify-between items-center border-b border-slate-800 pb-2 text-[8px] text-slate-400">
+                        <span className="flex items-center space-x-1 font-bold">
+                          <Activity size={9} className="text-emerald-500 animate-pulse" />
+                          <span>CARESYNC REMOTE BAND v4.8</span>
+                        </span>
+                        <span>BATTERY 94%</span>
+                      </div>
+
+                      {/* Mock Watch Face UI */}
+                      <div className="my-3 text-center">
+                        <span className="text-[10px] text-slate-400 block font-semibold uppercase tracking-widest">Active Remote Subject</span>
+                        <span className="text-md font-extrabold text-[#E2E8F0] tracking-tight block">Mubashir T. (Age 68)</span>
+                        <div className="mt-2.5 flex justify-center items-baseline space-x-1">
+                          <span className={`${wearablePulseStatus === "stable" ? "text-emerald-400" : "text-rose-500"} text-[30px] font-black tracking-tighter leading-none`}>
+                            {wearableVitals.hr}
+                          </span>
+                          <span className="text-[10px] text-slate-405 uppercase font-bold">bpm</span>
+                        </div>
+                      </div>
+
+                      {/* Heartbeat ECG wave visual SVG */}
+                      <div className="h-10 border border-slate-800/60 rounded bg-slate-950 flex items-center relative overflow-hidden mb-3">
+                        <div className="absolute left-2.5 top-1 text-[7px] text-slate-500 font-semibold uppercase select-none tracking-wider font-mono">
+                          Live ECG Rhythm: {wearableVitals.ecg}
+                        </div>
+                        <svg className="w-full h-full" viewBox="0 0 360 60">
+                          <path
+                            fill="none"
+                            stroke={wearablePulseStatus === "stable" ? "#10B981" : "#EF4444"}
+                            strokeWidth="2"
+                            d="M 0 30 Q 15 30 25 30 L 30 10 L 35 50 L 40 30 L 70 30 L 80 30 Q 95 30 105 30 L 110 10 L 115 50 L 120 30 L 150 30 L 160 30 Q 175 30 185 30 L 190 10 L 195 50 L 200 30 L 230 30 L 240 30 Q 255 30 265 30 L 270 10 L 275 50 L 280 30 L 310 30 L 320 30 Q 335 30 345 30 L 350 10 L 355 50 L 360 30"
+                            className={wearablePulseStatus !== "stable" ? "animate-pulse" : ""}
+                          />
+                        </svg>
+                      </div>
+
+                      {/* Wearable stats strip */}
+                      <div className="grid grid-cols-3 gap-2 text-center text-[10px] select-none mb-3">
+                        <div className="p-1.5 bg-slate-850 rounded border border-slate-800">
+                          <span className="text-[7.5px] text-slate-400 uppercase block font-semibold">OXYGEN SAT</span>
+                          <span className={`font-extrabold ${wearableVitals.spo2 < 90 ? "text-red-400 font-black animate-pulse" : "text-emerald-400"}`}>
+                            {wearableVitals.spo2}% SpO₂
+                          </span>
+                        </div>
+                        <div className="p-1.5 bg-slate-850 rounded border border-slate-800">
+                          <span className="text-[7.5px] text-slate-400 uppercase block font-semibold">STRESS SCALE</span>
+                          <span className={`font-extrabold ${wearableVitals.stress > 80 ? "text-amber-400" : "text-[#38BDF8]"}`}>
+                            {wearableVitals.stress}/100
+                          </span>
+                        </div>
+                        <div className="p-1.5 bg-slate-850 rounded border border-slate-800">
+                          <span className="text-[7.5px] text-slate-400 uppercase block font-semibold">STAMINA</span>
+                          <span className="font-extrabold text-yellow-500 font-sans">{wearableVitals.steps} steps</span>
+                        </div>
+                      </div>
+
+                      {/* Wrist Simulator scenario buttons */}
+                      <div className="border-t border-slate-800 pt-3 flex flex-wrap gap-1.5 justify-center">
+                        <button
+                          onClick={() => setWearableScenario("stable")}
+                          className={`px-2 py-1 text-[8px] font-black uppercase rounded cursor-pointer transition-all border ${
+                            wearablePulseStatus === "stable"
+                              ? "bg-emerald-600 text-white border-emerald-900"
+                              : "bg-slate-850 text-slate-400 border-slate-700 hover:bg-slate-800"
+                          }`}
+                        >
+                          🟢 Rest Stable (72 bpm)
+                        </button>
+                        <button
+                          onClick={() => setWearableScenario("hypoxia")}
+                          className={`px-2 py-1 text-[8px] font-black uppercase rounded cursor-pointer transition-all border ${
+                            wearablePulseStatus === "abnormal"
+                              ? "bg-rose-950 text-rose-300 border-rose-900 shadow-md"
+                              : "bg-slate-850 text-slate-400 border-slate-700 hover:bg-rose-950/20"
+                          }`}
+                        >
+                          🔴 Hypoxia Drop (87%)
+                        </button>
+                        <button
+                          onClick={() => setWearableScenario("afib")}
+                          className={`px-2 py-1 text-[8px] font-black uppercase rounded cursor-pointer transition-all border ${
+                            wearablePulseStatus === "afib"
+                              ? "bg-amber-950 text-amber-300 border-amber-900 shadow-md"
+                              : "bg-slate-850 text-slate-400 border-slate-700 hover:bg-amber-950/20"
+                          }`}
+                        >
+                          🩺 AFib Trigger (142 bpm)
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Family SMS notification panel */}
+                    <div className="border border-slate-200 rounded-sm bg-white p-4 shadow-xs flex flex-col justify-between flex-1">
+                      <div>
+                        <div className="flex justify-between items-center border-b border-slate-100 pb-2 mb-2.5">
+                          <div>
+                            <h3 className="text-xs font-extrabold text-slate-800 uppercase tracking-wide font-mono">Family Emergency Broadcast</h3>
+                            <p className="text-[8.5px] text-slate-400 font-bold">Simulates automated IoT safety notifications to patient guardians.</p>
+                          </div>
+                          <span className="text-[7.5px] bg-[#E0F2FE] text-[#0284C7] border border-[#38BDF8] px-1.5 py-0.2 uppercase font-extrabold font-mono">
+                            SMS API GATEWAY
+                          </span>
+                        </div>
+
+                        {wearableVitals.spo2 < 90 || wearablePulseStatus === "afib" ? (
+                          <div className="bg-sky-50 rounded border border-sky-150 p-3 text-left font-mono text-[9px] relative mt-1.5 select-none">
+                            <span className="absolute top-[-5.5px] left-2 bg-[#0284C7] text-white px-1.5 py-0.2 rounded text-[7px] font-extrabold uppercase">
+                              Active Notification Sendout
+                            </span>
+                            <div className="text-[#0369A1] font-bold mt-1 uppercase text-[8px]">
+                              OUTGOING TO: DAUGHTER (SARAH T.) &bull; +91 94443 XXXXX
+                            </div>
+                            <p className="text-[#0C4A6E] font-semibold italic leading-relaxed mt-1.5 bg-white p-2 border border-sky-200 rounded">
+                              "CARESYNC ADVISOR 🚨: Mubashir's oxygen dropped critical to <span className="text-red-650 font-black">{wearableVitals.spo2}%</span>. Auto-booking Ambulance to Anna Nagar, Destination: Apollo Speciality Clinic. Distance: 3.2 km, ETA: 6 mins."
+                            </p>
+                            <span className="text-[8px] bg-sky-205 text-[#0369A1] px-1 py-0.2 rounded-sm font-extrabold inline-block mt-2">
+                              ✓ SENT VIA TWILIO GATEWAY (AUTO)
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="p-4 bg-slate-50 border border-dashed border-slate-200 rounded text-center text-slate-400 text-[9px] font-medium leading-relaxed italic select-none">
+                            Monitoring patient remote status. No crisis detected. Inactive standby mode.
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-[8px] text-slate-400 font-mono">
+                        <span>EMERGENCY DISPATCH NO.: TR-4921</span>
+                        <span>DURABLE SECURE PERSISTENCE</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* MIDDLE BENTO (Span 4): Ambulance Recommendation & Bed AI Digital Twin */}
+                  <div className="lg:col-span-4 flex flex-col space-y-4">
+                    
+                    {/* Smart Ambulance Routing HUD */}
+                    <div className="border border-slate-200 rounded-sm bg-white p-4">
+                      <div className="flex justify-between items-center mb-2">
+                        <div>
+                          <h3 className="text-xs font-extrabold text-slate-800 uppercase tracking-wide font-mono">Ambulance Routing Station</h3>
+                          <p className="text-[8.5px] text-slate-400 font-bold">Dynamic hospital proximity routing and auto-booking system.</p>
+                        </div>
+                        <span className="text-[7.5px] bg-red-50 text-rose-700 border border-rose-200 px-1.5 py-0.2 uppercase font-extrabold font-mono">
+                          ICU ROUTER
+                        </span>
+                      </div>
+
+                      <div className="space-y-3 font-mono text-[9px]">
+                        <div className="p-2 border border-slate-200 rounded-sm bg-slate-50 relative mt-1 select-none">
+                          <span className="text-[7px] text-slate-450 uppercase tracking-wider block font-bold font-mono">ORIGIN LOCATION</span>
+                          <span className="text-[11px] font-extrabold text-slate-800">Residential Quarter, Anna Nagar</span>
+                          
+                          <span className="text-[7px] text-slate-450 uppercase tracking-wider block font-bold font-mono mt-2">RECOMMENDED DESTINATION</span>
+                          <span className="text-[11px] font-extrabold text-purple-750">Apollo Chennai Speciality Hospital (3.2 km)</span>
+                        </div>
+
+                        <div className="p-2.5 border border-slate-200 rounded-sm bg-slate-50 flex justify-between items-center select-none font-mono">
+                          <div>
+                            <span className="text-[7.5px] text-slate-450 block font-bold">AMBULANCE DISPATCH CAR</span>
+                            <span className="text-[12px] font-extrabold text-slate-800">VEHICLE ID: TN-01-AMB-4320</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-[7.5px] text-slate-450 block font-bold font-mono">ETA BEDSIDE</span>
+                            <span className="text-sm font-extrabold text-rose-650 animate-pulse">{ambulanceStatus === "dispatched" || ambulanceStatus === "arrived" ? `${ambulanceEta} MINS` : "-- : --"}</span>
+                          </div>
+                        </div>
+
+                        {ambulanceStatus === "idle" ? (
+                          <button
+                            onClick={() => {
+                              setAmbulanceStatus("dispatched");
+                              setAmbulanceEta(6);
+                            }}
+                            className="w-full px-2 py-2 bg-rose-600 hover:bg-rose-700 text-white font-extrabold uppercase rounded shadow-xs cursor-pointer text-center select-none transition-all font-mono"
+                          >
+                            ⚡ Book Emergency ICU Ambulance Now
+                          </button>
+                        ) : (
+                          <div className="flex space-x-1.5">
+                            <div className="flex-1 p-2 bg-emerald-50 border border-emerald-200 rounded text-center text-emerald-700 font-extrabold uppercase text-[8.5px] animate-pulse font-mono">
+                              🚑 DISPATCHED CASE OK
+                            </div>
+                            <button
+                              onClick={() => setAmbulanceStatus("idle")}
+                              className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded text-[9px] font-bold cursor-pointer font-mono"
+                              title="Reset dispatch simulator"
+                            >
+                              Reset
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* AI Digital Twin Simulation console */}
+                    <div className="border border-slate-200 rounded-sm bg-white p-4 shadow-xs flex-1 flex flex-col justify-between">
+                      <div>
+                        <div className="flex justify-between items-center border-b border-slate-100 pb-2 mb-2.5">
+                          <div>
+                            <h3 className="text-xs font-extrabold text-slate-800 uppercase tracking-wide font-mono">Physiological Digital Twin</h3>
+                            <p className="text-[8.5px] text-slate-400 font-bold">Simulates diagnostic treatment alterations before active execution.</p>
+                          </div>
+                          <span className="text-[7.5px] bg-[#FAF5FF] text-[#7E22CE] border border-purple-200 px-1.5 py-0.2 uppercase font-extrabold font-mono">
+                            TWIN v2.5
+                          </span>
+                        </div>
+
+                        {/* Survival Forecast display dashboard */}
+                        <div className="p-3 bg-slate-50 border border-indigo-50/50 rounded-sm flex items-center justify-between mb-3 select-none">
+                          <div className="font-mono">
+                            <span className="text-[7.5px] text-slate-450 block font-bold font-mono">SIMULATED SURVIVAL ODDS:</span>
+                            <span className={`text-[23px] font-black ${twinSurvivalChance >= 94 ? "text-emerald-700" : twinSurvivalChance >= 80 ? "text-[#0284C7]" : "text-amber-500"} leading-none block font-mono mt-0.5`}>
+                              {twinSurvivalChance}% Probability
+                            </span>
+                          </div>
+
+                          <div className="text-right">
+                            <span className="text-[7.5px] text-slate-455 block font-bold font-mono">SEPSIS HAZARD DRIFT:</span>
+                            <span className="text-[12px] font-black text-rose-550 block truncate font-mono">
+                              {100 - twinSurvivalChance}% Risk Factor
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Interactive Digital Twin Controls */}
+                        <div className="space-y-2 select-none font-sans text-[10px]">
+                          <span className="text-[8px] text-slate-400 uppercase tracking-widest font-bold block mb-1 font-mono">Simulate Therapeutic Options</span>
+                          
+                          <label className="flex items-center space-x-2.5 p-2 border border-slate-200 hover:bg-slate-50 rounded cursor-pointer transition-colors">
+                            <input
+                              type="checkbox"
+                              checked={digitalTwinOptions.oxygen}
+                              onChange={() => handleToggleTwinOption("oxygen")}
+                              className="rounded border-slate-300 text-indigo-650 h-3.5 w-3.5 cursor-pointer"
+                            />
+                            <div>
+                              <span className="font-extrabold text-slate-800 block">Deploy Oxygen Enrichment (+12%)</span>
+                              <span className="text-[8.5px] text-slate-450 block font-semibold leading-none">Increases target systemic oxygen delivery saturation index</span>
+                            </div>
+                          </label>
+
+                          <label className="flex items-center space-x-2.5 p-2 border border-slate-200 hover:bg-slate-50 rounded cursor-pointer transition-colors">
+                            <input
+                              type="checkbox"
+                              checked={digitalTwinOptions.antibiotics}
+                              onChange={() => handleToggleTwinOption("antibiotics")}
+                              className="rounded border-slate-300 text-indigo-650 h-3.5 w-3.5 cursor-pointer"
+                            />
+                            <div>
+                              <span className="font-extrabold text-slate-800 block">Infuse Broad-spectrum Sepsis Antibiotics (+15%)</span>
+                              <span className="text-[8.5px] text-slate-450 block font-semibold leading-none">Limits systemic bacterial replication cascade rates</span>
+                            </div>
+                          </label>
+
+                          <label className="flex items-center space-x-2.5 p-2 border border-slate-200 hover:bg-slate-50 rounded cursor-pointer transition-colors">
+                            <input
+                              type="checkbox"
+                              checked={digitalTwinOptions.fluids}
+                              onChange={() => handleToggleTwinOption("fluids")}
+                              className="rounded border-slate-300 text-indigo-650 h-3.5 w-3.5 cursor-pointer"
+                            />
+                            <div>
+                              <span className="font-extrabold text-slate-800 block">Initiate Bolus Crystalloid Fluids Resuscitation (+8%)</span>
+                              <span className="text-[8.5px] text-slate-450 block font-semibold leading-none">Stabilizes arterial blood pressure above hypoxia constraints</span>
+                            </div>
+                          </label>
+                        </div>
+                      </div>
+
+                      {/* Twin log terminal readout */}
+                      <div className="mt-3.5 border border-slate-800 rounded bg-slate-950 p-2 text-left font-mono text-[8.5px] text-slate-300 leading-snug">
+                        <div className="text-[7px] text-indigo-400 border-b border-indigo-950 pb-1.5 mb-1.5 uppercase font-extrabold">Active Simulator Prediction Streams</div>
+                        <div className="h-[55px] overflow-y-auto space-y-1">
+                          {twinLog.map((logStr, idx) => (
+                            <div key={idx} className={logStr.includes("✓") ? "text-[#10B981] font-bold" : "text-slate-405 font-medium"}>
+                              {logStr}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* RIGHT BENTO (Span 4): Interactive Voice AI Nurse & Caseload Allocator */}
+                  <div className="lg:col-span-4 flex flex-col space-y-4">
+                    
+                    {/* Voice AI Nurse interaction console */}
+                    <div className="border border-slate-200 rounded-sm bg-white p-4 shadow-xs flex flex-col justify-between" style={{ minHeight: "260px" }}>
+                      
+                      <div>
+                        {/* Header block */}
+                        <div className="flex justify-between items-center border-b border-slate-100 pb-2 mb-2.5 select-none font-mono">
+                          <div>
+                            <h3 className="text-xs font-extrabold text-slate-800 uppercase tracking-wide font-mono">Voice AI Nurse Dispatch</h3>
+                            <p className="text-[8.5px] text-slate-400 font-bold font-semibold">Interactive Chatbot queries hospital feeds instantaneously.</p>
+                          </div>
+                          
+                          <div className="flex items-center space-x-1">
+                            <span className="h-1.5 w-1.5 rounded-full bg-indigo-500 animate-ping"></span>
+                            <span className="text-[7.5px] bg-[#EEF2F6] text-slate-500 border border-slate-200 px-1.5 py-0.2 uppercase font-extrabold tracking-wider">
+                              ACTIVE MIC
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Interactive questions panel */}
+                        <div className="flex flex-col space-y-1 mb-2.5 font-mono select-none font-sans">
+                          <span className="text-[8px] text-slate-400 uppercase tracking-wider font-bold block font-mono">Quick Question Selectors:</span>
+                          <button
+                            onClick={() => askVoiceAI("Show me critical patients")}
+                            className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-[#6D28D9] border border-indigo-150 rounded text-[8.5px] font-bold uppercase text-left cursor-pointer truncate transition-colors font-mono"
+                          >
+                            🩺 "Show me critical patient profiles"
+                          </button>
+                          <button
+                            onClick={() => askVoiceAI("Why is Sarah Jenkins Sepsis score spiking")}
+                            className="px-2 py-1 bg-red-50 hover:bg-red-100 text-rose-700 border border-red-150 rounded text-[8.5px] font-bold uppercase text-left cursor-pointer truncate transition-colors font-mono"
+                          >
+                            ⚠️ "Why is Sarah Jenkins' score spiked?"
+                          </button>
+                          <button
+                            onClick={() => askVoiceAI("Explain digital twin outcomes")}
+                            className="px-2 py-1 bg-purple-50 hover:bg-purple-100 text-[#7E22CE] border border-purple-150 rounded text-[8.5px] font-bold uppercase text-left cursor-pointer truncate transition-colors font-mono"
+                          >
+                            🔬 "Explain physiological Twin outcomes"
+                          </button>
+                        </div>
+
+                        {/* Chat Response console */}
+                        <div className="bg-slate-50 border border-slate-200 p-3 rounded font-serif text-[10px] leading-relaxed relative flex-1">
+                          <span className="font-mono text-[8px] font-bold uppercase block text-slate-450 border-b border-slate-200/80 pb-1 mb-1.5">Voice Companion Audio Output:</span>
+                          {voiceNurseIsTyping ? (
+                            <div className="flex items-center space-x-2 text-indigo-500 font-mono text-[9px] py-1.5">
+                              <span className="h-1.5 w-1.5 rounded-full bg-indigo-500 animate-bounce"></span>
+                              <span className="h-1.5 w-1.5 rounded-full bg-indigo-500 animate-bounce delay-100"></span>
+                              <span className="h-1.5 w-1.5 rounded-full bg-indigo-500 animate-bounce delay-200"></span>
+                              <span>CareSync Voice AI processing audio streams...</span>
+                            </div>
+                          ) : (
+                            <p className="text-slate-800 italic font-medium leading-relaxed font-sans text-[9px]">
+                              "{voiceNurseAnswer}"
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="pt-2.5 border-t border-slate-100 flex justify-between items-center text-[7.5px] text-slate-400 select-none font-mono">
+                        <span>AUDIO DECODER: SPEECH-TO-TEXT ACTIVE</span>
+                        <span className="text-[#10B981] font-extrabold uppercase animate-pulse">● STABLE FEED</span>
+                      </div>
+                    </div>
+
+                    {/* Doctors caseload allocation & predictive bed assignment */}
+                    <div className="border border-slate-200 rounded-sm bg-white p-4 shadow-xs flex-1 flex flex-col justify-between">
+                      <div>
+                        <div className="flex justify-between items-center border-b border-slate-100 pb-2 mb-2 select-none font-mono">
+                          <div>
+                            <h3 className="text-xs font-extrabold text-slate-800 uppercase tracking-wide font-mono">Caseload Matrix & Bed Forecasts</h3>
+                            <p className="text-[8.5px] text-slate-400 font-bold font-semibold">Auto-assigns doctors by workload balances to optimize emergency arrival times.</p>
+                          </div>
+                        </div>
+
+                        <div className="overflow-x-auto my-2 select-none">
+                          <table className="w-full text-left text-[8.5px] border-collapse font-mono">
+                            <thead>
+                              <tr className="bg-slate-50 border-b border-slate-200 text-[7.5px] text-slate-450 font-bold uppercase">
+                                <th className="p-1">Specialist On Duty</th>
+                                <th className="p-1 text-center">Active Caseload</th>
+                                <th className="p-1 text-right">Ecosystem Status</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              <tr>
+                                <td className="p-1 text-[#1E293B] font-extrabold">Dr. Smith</td>
+                                <td className="p-1 text-center text-red-650 font-black font-mono">10 Patients (Full)</td>
+                                <td className="p-1 text-right text-slate-500">Standby overload</td>
+                              </tr>
+                              <tr className="bg-emerald-50 text-emerald-900 border-y border-emerald-100">
+                                <td className="p-1 font-extrabold">Dr. David</td>
+                                <td className="p-1 text-center text-emerald-800 font-extrabold font-mono">2 Patients (Idle)</td>
+                                <td className="p-1 text-right text-emerald-800 font-bold">Recommended Task Route</td>
+                              </tr>
+                              <tr>
+                                <td className="p-1 text-[#1E293B]">Dr. Emma</td>
+                                <td className="p-1 text-center font-mono">7 Patients</td>
+                                <td className="p-1 text-right text-slate-500">Normal duty</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+
+                        {/* Bed conversion risk profile */}
+                        <div className="p-2 border border-slate-200 rounded-sm bg-slate-50 select-none">
+                          <span className="text-[7.5px] text-slate-400 block font-extrabold font-mono">PREDICTIVE 2-HOUR ICU BED REQUIREMENT:</span>
+                          <div className="flex justify-between items-center text-[9px] mt-1 pr-1 font-mono">
+                            <div>
+                              <span className="font-extrabold text-[#1E293B]">Patient Emma:</span>
+                              <span className="text-[#B91C1C] font-black block leading-none mt-0.5">85% ICU Needed</span>
+                            </div>
+                            <div className="text-right">
+                              <span className="font-extrabold text-[#1E293B]">Patient Alice:</span>
+                              <span className="text-emerald-700 font-extrabold block leading-none mt-0.5">22% ICU Needed</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="pt-2 border-t border-slate-100 text-center select-none font-mono">
+                        <button
+                          onClick={() => askVoiceAI("Analyze bed resource constraints")}
+                          className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold uppercase hover:scale-101 transition-all rounded text-[8px] cursor-pointer"
+                        >
+                          🔬 Trigger Smart Case Resource Planning Query
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Ultimate CareSync Ecosystem Flow horizontal infographic */}
+                <div className="mt-4 border border-slate-200 bg-slate-900 text-slate-400 p-4 font-mono select-none rounded">
+                  <div className="flex justify-between items-center border-b border-slate-800 pb-2 mb-3">
+                    <span className="text-[8.5px] font-black text-slate-100 uppercase tracking-widest block font-mono">CareSync Global AI Ecosystem Pipeline</span>
+                    <span className="text-[7.5px] bg-slate-800 text-emerald-400 px-1.5 py-0.2 rounded font-extrabold">LIVE ARCHITECTURE SCHEMA</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-9 gap-3 text-center text-[7.5px] font-bold leading-normal relative">
+                    <div className="p-2 border border-slate-800 bg-slate-950/40 rounded flex flex-col justify-between">
+                      <span className="text-white">1. Wearable Watch</span>
+                      <span className="text-[6.5px] text-slate-500 font-semibold block mt-1">Ingests HR, SpO₂, ECG, sleep anomalies on wrist</span>
+                    </div>
+                    <div className="p-2 border border-slate-800 bg-slate-950/40 rounded flex flex-col justify-between">
+                      <span className="text-[#38BDF8]">2. Edge Gateway</span>
+                      <span className="text-[6.5px] text-slate-500 font-semibold block mt-1">SIM card edge data streams via fast WebSockets</span>
+                    </div>
+                    <div className="p-2 border border-slate-800 bg-slate-950/40 rounded flex flex-col justify-between whitespace-nowrap">
+                      <span className="text-amber-500 animate-pulse">3. AI Predictor</span>
+                      <span className="text-[6.5px] text-slate-500 font-semibold block mt-1">Local Edge ML maps triage health hazards in real-time</span>
+                    </div>
+                    <div className="p-2 border border-slate-800 bg-slate-950/40 rounded flex flex-col justify-between">
+                      <span className="text-purple-400">4. Handshake Stack</span>
+                      <span className="text-[6.5px] text-slate-505 font-semibold block mt-1">Pagers alert designated clinical duty leads</span>
+                    </div>
+                    <div className="p-2 border border-slate-800 bg-slate-950/40 rounded flex flex-col justify-between">
+                      <span className="text-[#10B981]">5. Family Alert</span>
+                      <span className="text-[6.5px] text-slate-500 font-semibold block mt-1">Dispatches auto SMS notifications to daughter with health logs</span>
+                    </div>
+                    <div className="p-2 border border-slate-800 bg-slate-950/40 rounded flex flex-col justify-between">
+                      <span className="text-rose-500">6. Ambulance ETA</span>
+                      <span className="text-[6.5px] text-slate-500 font-semibold block mt-1">Auto-books emergency carrier and calculates ETA route</span>
+                    </div>
+                    <div className="p-2 border border-slate-800 bg-slate-950/40 rounded flex flex-col justify-between">
+                      <span className="text-indigo-400">7. Ward Admission</span>
+                      <span className="text-[6.5px] text-slate-500 font-semibold block mt-1">Coordinates hospital entry based on ICU bed forecasts</span>
+                    </div>
+                    <div className="p-2 border border-slate-800 bg-slate-950/40 rounded flex flex-col justify-between">
+                      <span className="text-teal-400">8. Digital Clone</span>
+                      <span className="text-[6.5px] text-slate-500 font-semibold block mt-1">Digital Twin assesses clinical interventions before execution</span>
+                    </div>
+                    <div className="p-2 border border-indigo-950 bg-indigo-900 text-white rounded flex flex-col justify-between shadow-lg">
+                      <span>9. Intervention</span>
+                      <span className="text-[6.5px] text-indigo-200 font-semibold block mt-1">Drastically reduces Bedside Estimated Arrival (ETI) times</span>
+                    </div>
+                  </div>
+
+                  {/* Social outreach & spot rural Village use case */}
+                  <div className="mt-3.5 pt-3.5 border-t border-slate-800 text-[8.5px] flex flex-col md:flex-row justify-between items-start md:items-center gap-2">
+                    <div className="flex items-center space-x-2">
+                      <span className="bg-[#10B981] text-white px-1.5 py-0.2 rounded text-[7.5px] font-extrabold uppercase">Spotlight: Primary Rural Health Outreach</span>
+                      <p className="text-slate-400 font-semibold">Allows low-resource villages with cheap SpO₂ bands to enjoy world-class predictive, offline-resilient ICU alert safeguards.</p>
+                    </div>
+                    <div className="text-slate-500 uppercase font-black text-[7.5px] tracking-widest text-right">
+                      CareSync Global Health Automation Framework &bull; All Rights Reserved
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          )}
+
         </section>
 
         {/* --- Right parameter column (160px fixed width) --- */}
         {/* Pinned Right - Aligns with hospital command console monitors showing ACTIVELY MONITORED patient */}
-        <section id="parameter-column" className="w-[160px] h-full bg-[#E2E8F0] grid grid-rows-6 border-l border-slate-200">
+        <section 
+          id="parameter-column" 
+          className={`${
+            isVitalsOpen ? "fixed right-0 top-[44px] bottom-0 z-30 shadow-2xl w-[150px] border-l border-slate-300 grid grid-rows-6" : "hidden"
+          } lg:static lg:grid lg:w-[160px] lg:grid-rows-6 lg:shadow-none h-full bg-[#E2E8F0] border-l border-slate-200 transition-all duration-300`}
+        >
           
           {/* Block 1: HR */}
           <div id="param-hr-block" style={{ contentVisibility: "auto" }} className="p-2 border-b border-slate-300 flex flex-col justify-between bg-white/70">

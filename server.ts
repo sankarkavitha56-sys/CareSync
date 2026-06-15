@@ -7,8 +7,14 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Safe resolution for both ESM (tsx dev) and CJS (esbuild prod bundle)
+const _filename = typeof import.meta !== "undefined" && import.meta.url
+  ? fileURLToPath(import.meta.url)
+  : (typeof __filename !== "undefined" ? __filename : "");
+
+const _dirname = typeof import.meta !== "undefined" && import.meta.url
+  ? path.dirname(fileURLToPath(import.meta.url))
+  : (typeof __dirname !== "undefined" ? __dirname : "");
 
 // Lazy initialization of Gemini SDK
 let aiClient: GoogleGenAI | null = null;
