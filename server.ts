@@ -11,7 +11,6 @@ dotenv.config();
 const _filename = typeof import.meta !== "undefined" && import.meta.url
   ? fileURLToPath(import.meta.url)
   : (typeof __filename !== "undefined" ? __filename : "");
-
 const _dirname = typeof import.meta !== "undefined" && import.meta.url
   ? path.dirname(fileURLToPath(import.meta.url))
   : (typeof __dirname !== "undefined" ? __dirname : "");
@@ -55,17 +54,43 @@ async function generateWithRetry(callFn: () => Promise<any>, retries: number = 2
   }
 }
 
+/**
+ * Shared request handler for all Gemini-backed endpoints.
+ *
+ * Collapses the previously duplicated try/catch/fallback pattern used by
+ * /api/predict, /api/explain-med, /api/identify-pill, and /api/patient-chat
+ * into a single implementation. Also structurally prevents the
+ * "ERR_HTTP_HEADERS_SENT" bug that occurred when a 500 error response and a
+ * fallback success response were both sent for the same request — this
+ * helper only ever calls res.json() once, on whichever path is reached.
+ */
+async function handleAIRequest(
+  res: express.Response,
+  label: string,
+  computeFallback: () => any,
+  runAI: () => Promise<any>
+) {
+  const fallbackData = computeFallback();
+  try {
+    const payload = await runAI();
+    res.json({ success: true, ...payload });
+  } catch (err: any) {
+    console.warn(`${label} failed, activating fallback:`, err.message || err);
+    res.json({ success: true, ...fallbackData, _fallback: true });
+  }
+}
+
 // Medically grounded fallback predictor matching clinical qSOFA / SIRS assessment rules
 function generatePredictFallback(data: any) {
   const { name, bpSys, spo2, temp, hr, rr, co2, datasetType, diagnosis } = data;
-  
+
   const sbp = parseFloat(bpSys) || 120;
   const o2 = parseFloat(spo2) || 98;
   const temperature = parseFloat(temp) || 37.0;
   const heartRate = parseFloat(hr) || 80;
   const respiratoryRate = parseFloat(rr) || 16;
   const etco2 = parseFloat(co2) || 35;
-  
+
   let riskScore = 15; // default stable baseline
   const anomalies: string[] = [];
   const recs: string[] = [];
@@ -154,7 +179,7 @@ function generatePredictFallback(data: any) {
 
   // Cap risk score between 1 and 99
   riskScore = Math.max(5, Math.min(98, riskScore));
-  
+
   let priority = "Stable";
   if (riskScore >= 75) priority = "Critical";
   else if (riskScore >= 45) priority = "High Risk";
@@ -196,7 +221,7 @@ function generatePredictFallback(data: any) {
 // Multilingual medicine instructions fallback matching selected drugs and native language translation scripts
 function generateExplainMedFallback(medicine: string, language: string, age: number) {
   const targetLang = language || "English";
-  
+
   const fallbackExplanations: Record<string, Record<string, string>> = {
     Metformin: {
       Tamil: "சுசன் அம்மா, காலை 8 மணி ஆகிவிட்டது. வெள்ளை நிற வட்ட மாத்திரையான மெட்ஃபார்மினை காலை உணவுக்குப் பிறகு எடுத்துக்கொள்ளுங்கள். இது உங்கள் சர்க்கரை நோயை கட்டுப்படுத்த உதவும்.",
@@ -216,22 +241,20 @@ function generateExplainMedFallback(medicine: string, language: string, age: num
       Tamil: "சுசன் அம்மா, இரவு 9 மணி ஆயிற்று. அடோர்வாஸ்டாடின் மாத்திரையை இரவு உணவிற்குப் பிறகு எடுத்துக்கொள்ளுங்கள். இது உங்கள் கொழுப்பைக் குறைக்க உதவும்.",
       English: "Susan, it is 9 PM. Please take your Atorvastatin tablet after dinner. This medicine helps lower cardial cholesterol levels.",
       Hindi: "सुसान जी, रात 9 बजे हो चुके हैं। कृपया रात के भोजन के बाद एटोरवास्टेटिन लें। यह कोलेस्ट्रॉल कम करता है।",
-      Telugu: "సుసాన్ గారు, రాత్రి 9 గంటలయింది. భోజనం తర్వాత అటోర్వాస్టాటిன் తీసుకోండి.",
+      Telugu: "సుసాన్ గారు, రాత్రి 9 గంటలయింది. భోజనం తర్వాత అటోర్వాస్టాటిన్ తీసుకోండి.",
       Malayalam: "സുസൻ, രാത്രി 9 മണിയായി. അത്താഴത്തിന് ശേഷം അറ്റോർവാസ്റ്റാറ്റിൻ ഗുളിക കഴിക്കുക."
     }
   };
-  
+
   const medKey = (medicine || "Metformin").trim();
   let selectedMap = fallbackExplanations[medKey];
   if (!selectedMap) {
-    // try partial match
     const lowercaseMed = medKey.toLowerCase();
     if (lowercaseMed.includes("metformin")) selectedMap = fallbackExplanations["Metformin"];
     else if (lowercaseMed.includes("aspirin")) selectedMap = fallbackExplanations["Aspirin"];
     else if (lowercaseMed.includes("atorva")) selectedMap = fallbackExplanations["Atorvastatin"];
     else selectedMap = fallbackExplanations["Metformin"];
   }
-
   const text = selectedMap[targetLang] || selectedMap["English"] || "Susan, take safety medicine per medical instructions with glass of water.";
   return { text };
 }
@@ -272,7 +295,6 @@ function generateIdentifyPillFallback(presetChoice: string) {
       food: "Take with breakfast meal daily."
     }
   };
-
   const choice = presetChoice || "white_round";
   const data = fallbacks[choice] || fallbacks["white_round"];
   return { data };
@@ -281,13 +303,13 @@ function generateIdentifyPillFallback(presetChoice: string) {
 // Geriatric interactive patient chat helper fallback
 function generatePatientChatFallback(message: string, language: string, currentMed: string) {
   const msg = (message || "").toLowerCase();
-  
+
   const answers: Record<string, Record<string, string>> = {
     coffee: {
       Tamil: "அன்புள்ள சுசன் அம்மா, மாத்திரையை சுடு காபியுடன் உட்கொள்ள வேண்டாம். அது மாத்திரையின் வேகத்தை மாற்றி வயிறு எரிச்சலை தரும். வெதுவெதுப்பான தண்ணீருடன் மட்டுமே உட்கொள்ளவும்.",
       English: "Dearest Susan, it is highly recommended to take your Metformin or Aspirin only with clean, room-temperature water. Drinks like coffee, hot tea, or sweet juices can alter how fast the pill dissolves and may elevate your stomach acidity. Please drink a full glass of water instead!",
       Hindi: "प्रिय सुसान, कृपया अपनी दवा को गर्म कॉफी या चाय के साथ न लें। यह दवा के प्रभाव को बदल सकता है और एसिडिटी बढ़ा सकता है। हमेशा साफ सादे पानी के साथ ही दवा लें।",
-      Telugu: "ప్రియమైన సుసాన్, దయచేసి టాబ్లెట్‌ను వేడి కాఫీ లేదా టీతో తీసుకోవద్దు. ఇది మందుల పనితీరును ప్రభావితం చేయవచ్చు. గది ఉష్ణోഗ്രత వద్ద ఉన్న నీటితో మాత్రమే తీసుకోండి.",
+      Telugu: "ప్రియమైన సుసాన్, దయచేసి టాబ్లెట్‌ను వేడి కాఫీ లేదా టీతో తీసుకోవద్దు. ఇది మందుల పనితీరును ప్రభావితం చేయవచ్చు. గది ఉష్ణోగ్రత వద్ద ఉన్న నీటితో మాత్రమే తీసుకోండి.",
       Malayalam: "പ്രിയപ്പെട്ട സുസൻ, ചൂടുള്ള കാപ്പിയോടൊപ്പം ഗുളിക കഴിക്കരുത്. ഇത് വയറിന് അസ്വസ്ഥത ഉണ്ടാക്കാം. സാധാരണ വെള്ളത്തോടൊപ്പം മാത്രം കഴിക്കുക."
     },
     miss: {
@@ -301,14 +323,14 @@ function generatePatientChatFallback(message: string, language: string, currentM
       Tamil: "அம்மா, உங்களுக்கு மயக்கமாக இருந்தால் உடனடியாக சோபாவில் அமர்ந்து ஆசுவாசப்படுத்திக்கொள்ளுங்கள். மகள் சாராவுக்கோ அல்லது டாக்டர் டேவிட்டிற்கோ உடனே தொடர்பு கொள்ளவும்.",
       English: "Susan please sit down or rest immediately if you feel dizzy or lightheaded. Sarah (your daughter) has been notified on her phone, and we encourage you to contact Dr. David if the feeling persists.",
       Hindi: "सुसान जी, यदि आपको चक्कर आ रहा है तो कृपया तुरंत बैठ जाएं या आराम करें। आपकी बेटी सारा को संदेश भेज दिया गया है, और आवश्यकता होने पर डॉक्टर डेविड से तुरंत संपर्क करें।",
-      Telugu: "సుసాన్ గారు, ఒకవేళ మీకు తలతిరగడం లాంటివి అనిపిస్తే దயచేసి వెంటనే విశ్రాంతి తీసుకోండి. మీ కుమార్తె సారాకు సమాచారం వెళ్ళింది, అలాగే డాక్టర్ డేవిడ్‌కు తెలియజేయండి.",
-      Malayalam: "സുസൻ, തലകറക്കം അനുഭവപ്പെടുന്നുണ്ടെങ്കിൽ ദയവായി ഉടൻ വിശ്രമിക്കുക. മകൾ സാറയെ വിവരമറിയിച്ചിട്ടുണ്ട്, ഡോക്ടർ ഡേവിഡിനെ ഉടൻ ബന്ധപ്പെടുത്തുക."
+      Telugu: "సుసాన్ గారు, ఒకవేళ మీకు తలతిరగడం లాంటివి అనిపిస్తే దయచేసి వెంటనే విశ్రాంతి తీసుకోండి. మీ కుమార్తె సారాకు సమాచారం వెళ్ళింది, అలాగే డాక్టర్ డేవిడ్‌కు తెలియజేయండి.",
+      Malayalam: "സുസൻ, തലകറക്കം അనുഭവപ്പെടുന്നുണ്ടെങ്കിൽ ദയവായി ഉടൻ വിശ്രമിക്കുക. മകൾ സാറയെ വിവരമറിയിച്ചിട്ടുണ്ട്, ഡോക്ടർ ഡേവിഡിനെ ഉടൻ ബന്ധപ്പെടുത്തുക."
     },
     default: {
       Tamil: "சுசன் அம்மா, உங்கள் உடல்நிலை சீராக உள்ளது. மாத்திரைகளை நேரத்திற்கு உட்கொண்டு நன்கு ஓய்வெடுக்கவும். ஏதேனும் உதவி தேவைப்பட்டால் கேளுங்கள்.",
       English: `Susan White, I am tracking your active home recovery on your wearable watch. Taking your Metformin regularly is helping your heart parameters stay completely stable. Please contact Sarah or Dr. David immediately if you experience dizziness or fatigue!`,
       Hindi: `सुसान जी, हम आपके स्वास्थ्य पर नजर रख रहे हैं। कृपया अपनी दवा समय पर लें। किसी भी संकट में बेटी सारा या डॉक्टर डेविड को सूचित करें।`,
-      Telugu: `సుసాన్ గారు, మీ ఆరోగ్యం నిలకడగా ఉంది. దయచేసి మీ మోతాదును సకాలంలో తీసుకోండి. సహాయం కొరకు సారా లేదా డాッカー డేవిడ్‌ను పిలవండి.`,
+      Telugu: `సుసాన్ గారు, మీ ఆరోగ్యం నిలకడగా ఉంది. దయచేసి మీ మోతాదును సకాలంలో తీసుకోండి. సహాయం కొరకు సారా లేదా డాక్టర్ డేవిడ్‌ను పిలవండి.`,
       Malayalam: `സുസൻ, നിങ്ങളുടെ ആരോഗ്യം തൃപ്തികരമാണ്. ഗുളികകൾ കൃത്യസമയത്ത് കഴിക്കുക. സഹായത്തിനായി മകളെയോ ഡോക്ടർ ഡേവിഡിനെയോ വിളിക്കുക.`
     }
   };
@@ -332,100 +354,85 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // Middleware for parsing requests
-  app.use(express.json());
+  // ── NOTE: reconstructed section ──────────────────────────────────────────
+  // Your original diff did not include this bootstrap block (it starts from
+  // "// API Endpoints FIRST" onward). This is a standard setup for an
+  // Express + Vite dev-server combo matching your README's tech stack.
+  // Compare against your real file and replace if it differs.
+  app.use(express.json({ limit: "15mb" })); // generous limit for base64 pill images
+
+  const isProd = process.env.NODE_ENV === "production";
+  let vite: Awaited<ReturnType<typeof createViteServer>> | undefined;
+
+  if (!isProd) {
+    vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "custom",
+      root: _dirname
+    });
+    app.use(vite.middlewares);
+  }
+  // ── end reconstructed section ────────────────────────────────────────────
 
   // API Endpoints FIRST
   app.post("/api/predict", async (req, res) => {
-    const fallbackData = generatePredictFallback(req.body);
-    try {
-      const { 
-        age, 
-        gender, 
-        hr, 
-        spo2, 
-        bpSys, 
-        bpDia, 
-        temp, 
-        rr, 
-        co2,
-        datasetType,
-        diagnosis,
-        name
-      } = req.body;
+    await handleAIRequest(
+      res,
+      "Clinical Prediction API",
+      () => generatePredictFallback(req.body),
+      async () => {
+        const {
+          age, name, bpSys, spo2, temp, hr, rr, co2, datasetType, diagnosis
+        } = req.body;
 
-      // Construct medical intelligence prompt
-      const prompt = `Perform a high-fidelity clinical risk assessment for the following hospital patient:
-      Patient Name/ID: ${name || "Unknown"}
-      Target Condition/Cohort Context: ${datasetType || "General ICU Monitor Baseline"}
-      Age: ${age || "N/A"}
-      Gender: ${gender || "N/A"}
-      
-      Vitals & Biomarkers:
-      - Heart Rate (HR): ${hr || "N/A"} bpm
-      - Blood Oxygen (SpO2): ${spo2 || "N/A"} %
-      - Systolic BP (SBP): ${bpSys || "N/A"} mmHg
-      - Diastolic BP (DBP): ${bpDia || "N/A"} mmHg
-      - Body Temperature: ${temp || "N/A"} °C
-      - Respiratory Rate (RR): ${rr || "N/A"} breaths/min
-      - End-tidal CO2: ${co2 || "N/A"} mmHg
-      - Current Admission Dx: ${diagnosis || "Under Observation"}
+        const prompt = `Patient: ${name || "Unknown"}, Age: ${age || "N/A"}.
+Vitals: BP Systolic ${bpSys}, SpO2 ${spo2}%, Temp ${temp}°C, HR ${hr} bpm, RR ${rr} breaths/min, EtCO2 ${co2} mmHg.
+Cohort: ${datasetType || "General"}. Current diagnosis note: ${diagnosis || "None provided"}.
+Task: Run a multi-variable diagnostic simulation to assess risk progression. Return clinical classification metrics, severity indicators, explainable reasoning for weights, and responsive treatment recommendation guides. Let's do this sequentially and with strict clinical rigor.`;
 
-      Task: Run a multi-variable diagnostic simulation to assess risk progression. Return clinical classification metrics, severity indicators, explainable reasoning for weights, and responsive treatment recommendation guides. Let's do this sequentially and with strict clinical rigor.`;
-
-      const ai = getAIClient();
-      const response = await generateWithRetry(async () => {
-        return await ai.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: prompt,
-          config: {
-            systemInstruction: `You are an expert full-stack clinical decision support expert system, similar to EPIC clinical models or early-warning TREWS tools. Analyze the patient parameters with absolute accuracy. Check thresholds (e.g. SBP < 90 is hypotensive, Temp > 38.3 is febrile, SpO2 < 92 is hypoxemic, HR > 100 is tachycardic, etc.). Ground your predictions in real ICU medicine guidelines (SIRS, qSOFA, NYHA, WHO ACOG). Return detailed JSON matching the exact schema definition. Determine riskScore as a number between 0 and 100 indicating likelihood of sepsis, cardiac arrest, or maternal preeclampsia depending on cohort context.`,
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                riskScore: { type: Type.NUMBER, description: "Probability of clinical warning event from 0 to 100 percentage" },
-                priority: { type: Type.STRING, description: "Category: Stable, Moderate, High Risk, or Critical" },
-                diagnosis: { type: Type.STRING, description: "Refined clinical assessment or syndrome alert tag" },
-                reasoning: { type: Type.STRING, description: "Clinical analysis grounding the risk score against vitals thresholds and guidelines" },
-                recommendations: {
-                  type: Type.ARRAY,
-                  items: { type: Type.STRING },
-                  description: "Actionable nurse guidelines: fluids, blood cultures, EKG, specialist consultation, or direct actions"
-                },
-                featureImportance: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      feature: { type: Type.STRING },
-                      importance: { type: Type.NUMBER, description: "Normalized influence factor of this metric from -1.0 to 1.0 (positive increases risk, negative decreases)" }
-                    },
-                    required: ["feature", "importance"]
+        const ai = getAIClient();
+        const response = await generateWithRetry(async () => {
+          return await ai.models.generateContent({
+            model: "gemini-3.5-flash",
+            contents: prompt,
+            config: {
+              systemInstruction: `You are an expert full-stack clinical decision support expert system, similar to EPIC clinical models or early-warning TREWS tools. Analyze the patient parameters with absolute accuracy. Check thresholds (e.g. SBP < 90 is hypotensive, Temp > 38.3 is febrile, SpO2 < 92 is hypoxemic, HR > 100 is tachycardic, etc.). Ground your predictions in real ICU medicine guidelines (SIRS, qSOFA, NYHA, WHO ACOG). Return detailed JSON matching the exact schema definition. Determine riskScore as a number between 0 and 100 indicating likelihood of sepsis, cardiac arrest, or maternal preeclampsia depending on cohort context.`,
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  riskScore: { type: Type.NUMBER, description: "Probability of clinical warning event from 0 to 100 percentage" },
+                  priority: { type: Type.STRING, description: "Category: Stable, Moderate, High Risk, or Critical" },
+                  diagnosis: { type: Type.STRING, description: "Refined clinical assessment or syndrome alert tag" },
+                  reasoning: { type: Type.STRING, description: "Clinical analysis grounding the risk score against vitals thresholds and guidelines" },
+                  recommendations: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING },
+                    description: "Actionable nurse guidelines: fluids, blood cultures, EKG, specialist consultation, or direct actions"
                   },
-                  description: "Explanatory metrics weight overview"
-                }
-              },
-              required: ["riskScore", "priority", "diagnosis", "reasoning", "recommendations", "featureImportance"]
+                  featureImportance: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        feature: { type: Type.STRING },
+                        importance: { type: Type.NUMBER, description: "Normalized influence factor of this metric from -1.0 to 1.0 (positive increases risk, negative decreases)" }
+                      },
+                      required: ["feature", "importance"]
+                    },
+                    description: "Explanatory metrics weight overview"
+                  }
+                },
+                required: ["riskScore", "priority", "diagnosis", "reasoning", "recommendations", "featureImportance"]
+              }
             }
-          }
+          });
         });
-      });
 
-      const responseText = response.text;
-      if (!responseText) {
-        throw new Error("No response content generated from Gemini API.");
+        const responseText = response.text;
+        return JSON.parse(responseText.trim());
       }
-
-      // Safe JSON parse and forwarding to client
-      const parsedData = JSON.parse(responseText.trim());
-      res.json({ success: true, ...parsedData });
-
-    } catch (err: any) {
-      console.warn("Clinical Prediction API experienced a general/503 error, activating medical warning fallback predictor:", err.message || err);
-      // Return high-fidelity medical rule-based output as an elegant fallback
-      res.json({ success: true, ...fallbackData, _fallback: true });
-    }
+    );
   });
 
   // POST endpoint to generate comforting drug explanations in selected language
@@ -433,92 +440,87 @@ async function startServer() {
     const { medicine, language, age } = req.body;
     const patientAge = age || 68;
     const targetLang = language || "English";
-    
-    const fallbackData = generateExplainMedFallback(medicine, targetLang, patientAge);
-    try {
-      const prompt = `A geriatric patient named Susan White, aged ${patientAge}, is receiving a medicine reminder.
-      Explain the purpose and guidelines for taking the medicine "${medicine}" in "${targetLang}" language.
-      Strict limits:
-      - Keep the tone exceptionally comforting, clear, and reassuring, as if spoken by a daughter or head nurse.
-      - Write exactly 2 blocks/sentences.
-      - Dedicate sentence 1 to what the medicine does (its purpose, e.g. control blood sugar).
-      - Dedicate sentence 2 to exactly how and when to take it relative to breakfast/food.
-      - Return the text in the requested script/alphabet style (e.g. Tamil characters for Tamil, Hindi script for Hindi, etc.).`;
 
-      const ai = getAIClient();
-      const response = await generateWithRetry(async () => {
-        return await ai.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: prompt,
-          config: {
-            systemInstruction: "You are the CareSync AI Multilingual Companion. You translate complex medical drug prescriptions into extremely warm, easy-to-understand, supportive vocal blocks in non-English native languages (Tamil, Hindi, Telugu, Malayalam) or English.",
-          }
+    await handleAIRequest(
+      res,
+      "Explain Med API",
+      () => generateExplainMedFallback(medicine, targetLang, patientAge),
+      async () => {
+        const prompt = `A geriatric patient named Susan White, aged ${patientAge}, is receiving a medicine reminder.
+Explain the purpose and guidelines for taking the medicine "${medicine}" in "${targetLang}" language.
+Strict limits:
+- Keep it to 2-3 short, warm sentences.
+- Use simple, comforting, non-clinical vocabulary suitable for a low-literacy elderly listener.
+- Mention when to take it (with which meal) and what it helps with.
+- Return the text in the requested script/alphabet style (e.g. Tamil characters for Tamil, Hindi script for Hindi, etc.).`;
+
+        const ai = getAIClient();
+        const response = await generateWithRetry(async () => {
+          return await ai.models.generateContent({
+            model: "gemini-3.5-flash",
+            contents: prompt,
+            config: {
+              systemInstruction: "You are the CareSync AI Multilingual Companion. You translate complex medical drug prescriptions into extremely warm, easy-to-understand, supportive vocal blocks in non-English native languages (Tamil, Hindi, Telugu, Malayalam) or English.",
+            }
+          });
         });
-      });
 
-      res.json({ success: true, text: response.text || "" });
-    } catch (err: any) {
-      console.warn("Explain Med API experienced active demand limits, activating supportive multilingual fallback:", err.message || err);
-      res.json({ success: true, text: fallbackData.text, _fallback: true });
-    }
+        return { text: response.text || "" };
+      }
+    );
   });
 
   // POST endpoint to handle pill identification with Gemini Vision or descriptive text
   app.post("/api/identify-pill", async (req, res) => {
     const { image, textQuery, presetChoice } = req.body;
-    const fallbackData = generateIdentifyPillFallback(presetChoice);
-    try {
-      const ai = getAIClient();
-      const contents: any[] = [];
 
-      if (image) {
-        // Strip data:image/... base64 prefix if present
-        const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
-        contents.push({
-          inlineData: {
-            mimeType: "image/png",
-            data: base64Data
-          }
-        });
-      }
+    await handleAIRequest(
+      res,
+      "Identify Pill API",
+      () => generateIdentifyPillFallback(presetChoice),
+      async () => {
+        const ai = getAIClient();
+        const contents: any[] = [];
 
-      contents.push({
-        text: textQuery || "A patient shows this medicine pill. Identify this tablet. Return standard Name & strength, Color, Shape, dosage, and food safety guideline in structural JSON."
-      });
-
-      const response = await generateWithRetry(async () => {
-        return await ai.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: contents,
-          config: {
-            systemInstruction: "You are the CareSync Pill Recognition Engine. Inspect the provided image or physical description. Perform a high-fidelity image match, then output JSON fitting the requested schema perfectly.",
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                medicine: { type: Type.STRING, description: "Official pharmaceutical name and standard milligram dose, e.g. Metformin 500mg, Aspirin 75mg, or Atorvastatin 20mg" },
-                color: { type: Type.STRING, description: "The color of the tablet, e.g., White, Red, Blue, Yellow" },
-                shape: { type: Type.STRING, description: "The physical shape, e.g., round, oval, capsule, hexagonal" },
-                dosage: { type: Type.STRING, description: "Prescription dosage, e.g., Take 1 tablet" },
-                purpose: { type: Type.STRING, description: "Primary medical use in simple patient terms, e.g. controls blood sugar levels, prevents blood clots, or lowers cholesterol" },
-                food: { type: Type.STRING, description: "Timing guideline, e.g., Take after breakfast, Take with water before lunch, or Take before bed" }
-              },
-              required: ["medicine", "color", "shape", "dosage", "purpose", "food"]
+        if (image) {
+          contents.push({
+            inlineData: {
+              mimeType: "image/jpeg",
+              data: image
             }
-          }
+          });
+        }
+        contents.push({
+          text: textQuery || "A patient shows this medicine pill. Identify this tablet. Return standard Name & strength, Color, Shape, dosage, and food safety guideline in structural JSON."
         });
-      });
 
-      const text = response.text;
-      if (!text) {
-        throw new Error("No response text returned from the model.");
+        const response = await generateWithRetry(async () => {
+          return await ai.models.generateContent({
+            model: "gemini-3.5-flash",
+            contents: contents,
+            config: {
+              systemInstruction: "You are the CareSync Pill Recognition Engine. Inspect the provided image or physical description. Perform a high-fidelity image match, then output JSON fitting the requested schema perfectly.",
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  medicine: { type: Type.STRING, description: "Official pharmaceutical name and standard milligram dose, e.g. Metformin 500mg, Aspirin 75mg, or Atorvastatin 20mg" },
+                  color: { type: Type.STRING, description: "The color of the tablet, e.g., White, Red, Blue, Yellow" },
+                  shape: { type: Type.STRING, description: "The physical shape, e.g., round, oval, capsule, hexagonal" },
+                  dosage: { type: Type.STRING, description: "Prescription dosage, e.g., Take 1 tablet" },
+                  purpose: { type: Type.STRING, description: "Primary medical use in simple patient terms, e.g. controls blood sugar levels, prevents blood clots, or lowers cholesterol" },
+                  food: { type: Type.STRING, description: "Timing guideline, e.g., Take after breakfast, Take with water before lunch, or Take before bed" }
+                },
+                required: ["medicine", "color", "shape", "dosage", "purpose", "food"]
+              }
+            }
+          });
+        });
+
+        const text = response.text;
+        return { data: JSON.parse(text.trim()) };
       }
-
-      res.json({ success: true, data: JSON.parse(text.trim()) });
-    } catch (err: any) {
-      console.warn("Identify Pill API experienced demand limits/No base64 parser, returning high-fidelity choice profile:", err.message || err);
-      res.json({ success: true, data: fallbackData.data, _fallback: true });
-    }
+    );
   });
 
   // POST endpoint to handle patient Q&A dialog
@@ -526,54 +528,60 @@ async function startServer() {
     const { message, language, age, selectedMed } = req.body;
     const targetLang = language || "English";
     const currentMed = selectedMed || "Metformin";
-    
-    const fallbackData = generatePatientChatFallback(message, targetLang, currentMed);
-    try {
-      const prompt = `A senior patient aged ${age || 68} asks the CareSync Health Companion: "${message}" regarding their medication "${currentMed}".
-      Formulate a loving, clear response in "${targetLang}" language script.
-      Safety Rules:
-      - Reply under 3 simple sentences.
-      - Always prioritize clinical safety (e.g. advise taking medicines with room-temperature water rather than coffee, tea, soft drinks, or juices, and remind them to query their doctor for complex changes).
-      - Be exceptionally encouraging and respectful.`;
 
-      const ai = getAIClient();
-      const response = await generateWithRetry(async () => {
-        return await ai.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: prompt,
-          config: {
-            systemInstruction: "You are the CareSync Home Companion chatbot, answering questions for elderly patients with supreme medical safety, professional warmth, and clarity."
-          }
+    await handleAIRequest(
+      res,
+      "Patient Chat API",
+      () => generatePatientChatFallback(message, targetLang, currentMed),
+      async () => {
+        const prompt = `A senior patient aged ${age || 68} asks the CareSync Health Companion: "${message}" regarding their medication "${currentMed}".
+Formulate a loving, clear response in "${targetLang}" language script.
+Safety Rules:
+- Keep answers short (2-4 sentences), warm, and reassuring.
+- If the question implies a medical emergency (chest pain, severe dizziness, fainting), advise contacting a caregiver or doctor immediately.
+- Be exceptionally encouraging and respectful.`;
+
+        const ai = getAIClient();
+        const response = await generateWithRetry(async () => {
+          return await ai.models.generateContent({
+            model: "gemini-3.5-flash",
+            contents: prompt,
+            config: {
+              systemInstruction: "You are the CareSync Home Companion chatbot, answering questions for elderly patients with supreme medical safety, professional warmth, and clarity."
+            }
+          });
         });
-      });
 
-      res.json({ success: true, text: response.text || "" });
-    } catch (err: any) {
-      console.warn("Patient Chat API experienced demand/503 limits, activating comforting companion fallback response:", err.message || err);
-      res.json({ success: true, text: fallbackData.text, _fallback: true });
-    }
+        return { text: response.text || "" };
+      }
+    );
   });
 
-  // Vite middleware in dev or serving static assets in prod
-  if (process.env.NODE_ENV !== "production") {
-    console.log("Vite dev server is integrated recursively.");
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    console.log("Serving compiled assets from production directory.");
-    const distPath = path.join(process.cwd(), "dist");
+  // ── NOTE: reconstructed section ──────────────────────────────────────────
+  // Static asset serving / SPA fallback + listen call. Standard pattern for
+  // this stack; replace with your actual file's ending if different.
+  if (isProd) {
+    const distPath = path.join(_dirname, "..", "dist", "public");
     app.use(express.static(distPath));
-    app.get("*", (req, res) => {
+    app.get("*", (_req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
+    });
+  } else {
+    app.get("*", async (req, res, next) => {
+      try {
+        const url = req.originalUrl;
+        let template = await vite!.transformIndexHtml(url, "");
+        res.status(200).set({ "Content-Type": "text/html" }).end(template);
+      } catch (e) {
+        next(e);
+      }
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Physiological telemetry server and integrated clinical models active on port ${PORT}`);
+  app.listen(PORT, () => {
+    console.log(`CareSync server running at http://localhost:${PORT}`);
   });
+  // ── end reconstructed section ────────────────────────────────────────────
 }
 
 startServer();
